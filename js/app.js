@@ -402,7 +402,7 @@ A.openAdd = (p = {}) => {
   const last = ls.get('sr-lastDeck', ''); const deckId = p.deckId || (decks.find(d => d.id === last) ? last : decks[0]?.id) || '';
   const { word, cut } = cleanSelection(p.word || '', p.sentence || '');
   UI.add = { word, cut, sentence: (p.sentence || '').trim(), deckId, explanation: '', example: (p.sentence || '').trim(), ipa: '', notes: '', tags: '', fillLater: true,
-    lookup: null, mIdx: 0, pickM: false, examples: [], exIdx: 0, pickE: false, dup: null, autoExp: '', autoEx: (p.sentence || '').trim(), from: p.from || '', newDeck: !decks.length };
+    lookup: null, mSel: [0], pickM: false, examples: [], exSel: [0], pickE: false, dup: null, autoExp: '', autoEx: (p.sentence || '').trim(), from: p.from || '', newDeck: !decks.length };
   UI.addReturn = UI.screen === 'add' ? UI.addReturn : (['home', 'deck', 'decks'].includes(UI.screen) ? UI.screen : 'home');
   go('add');
   if (word) runLookup();
@@ -419,19 +419,22 @@ async function runLookup() {
   for (const t of sentences) if (ex.length < 5 && !ex.some(e => e.text === t)) ex.push({ text: t, src: 'Tatoeba sentence library' });
   a.examples = ex;
   if (res.status === 'ok') {
-    a.mIdx = 0;
+    a.mSel = [0];
     if (!a.explanation || a.explanation === a.autoExp) { a.explanation = a.autoExp = res.meanings[0]?.def || ''; }
     if (!a.ipa) a.ipa = res.ipa || '';
     if (res.base && res.word !== w && a.word.trim() === w) { a.baseOffer = res.word; }
   }
-  if ((!a.example || a.example === a.autoEx) && ex.length) { a.exIdx = 0; a.example = a.autoEx = ex[0].text; }
+  if ((!a.example || a.example === a.autoEx) && ex.length) { a.exSel = [0]; a.example = a.autoEx = ex[0].text; }
   render();
 }
 window.UI_add = (k, v) => { if (UI.add) UI.add[k] = v; };
 A.addWordChanged = () => { const a = UI.add; const v = document.getElementById('aw').value; if (v.trim() && v.trim() !== (a.lookup?.word || '')) { a.word = v; a.dup = null; a.baseOffer = null; runLookup(); } };
 A.useBase = () => { const a = UI.add; a.word = a.baseOffer; a.baseOffer = null; render(); };
-A.pickMeaning = i => { const a = UI.add; a.mIdx = i; a.pickM = false; const m = a.lookup.meanings[i]; a.explanation = a.autoExp = m.def; render(); };
-A.pickExample = i => { const a = UI.add; a.exIdx = i; a.pickE = false; a.example = a.autoEx = a.examples[i].text; render(); };
+// Several meanings → numbered lines; several examples → one per line.
+const joinDefs = defs => defs.length === 1 ? defs[0] : defs.map((d, i) => `${i + 1}. ${d}`).join('\n');
+const toggleIn = (arr, i) => arr.includes(i) ? (arr.length > 1 ? arr.filter(x => x !== i) : arr) : [...arr, i].sort((x, y) => x - y);
+A.pickMeaning = i => { const a = UI.add; a.mSel = toggleIn(a.mSel, i); a.explanation = a.autoExp = joinDefs(a.mSel.map(k => a.lookup.meanings[k].def)); render(); };
+A.pickExample = i => { const a = UI.add; a.exSel = toggleIn(a.exSel, i); a.example = a.autoEx = a.exSel.map(k => a.examples[k].text).join('\n'); render(); };
 A.togglePick = k => { UI.add[k] = !UI.add[k]; render(); };
 A.retryLookup = () => runLookup();
 V.add = () => {
@@ -442,11 +445,11 @@ V.add = () => {
   else if (st === 'slow' || st === 'error') mid = `<div class="warn"><b>Connection is slow.</b> Type the details yourself, or <button class="link" onclick="A.retryLookup()">try again</button>.</div>`;
   else if (st === 'notfound') mid = `<div class="warn"><b>No dictionary entry for “${esc(L.word)}”.</b> Phrases and idioms are often missing. Type the details yourself.</div>`;
   else if (st === 'ok' && L.meanings.length) mid = a.pickM
-    ? `<div><label>Dictionary meanings (pick one)</label><div class="opts">${L.meanings.map((m, i) => `<button class="meaning ${a.mIdx === i ? 'on' : ''}" onclick="A.pickMeaning(${i})"><span class="muted">(${esc(m.pos)})</span> ${esc(m.def)}</button>`).join('')}</div></div>`
-    : `<div><label>Meaning <span class="muted" style="font-weight:400">· ${a.mIdx + 1} of ${L.meanings.length} from the dictionary</span></label><div class="picked"><div><span class="muted">(${esc(L.meanings[a.mIdx].pos)})</span> ${esc(L.meanings[a.mIdx].def)}</div>${L.meanings.length > 1 ? `<button class="link" onclick="A.togglePick('pickM')">Change</button>` : ''}</div></div>`;
+    ? `<div><label>Dictionary meanings (tick one or more)</label><div class="opts">${L.meanings.map((m, i) => `<button class="meaning check ${a.mSel.includes(i) ? 'on' : ''}" role="checkbox" aria-checked="${a.mSel.includes(i)}" onclick="A.pickMeaning(${i})"><span class="box">${a.mSel.includes(i) ? '✓' : ''}</span><span><span class="muted">(${esc(m.pos)})</span> ${esc(m.def)}</span></button>`).join('')}</div><button class="btn ghost sm" style="margin-top:8px;width:100%" onclick="A.togglePick('pickM')">Done</button></div>`
+    : `<div><label>Meaning <span class="muted" style="font-weight:400">· ${a.mSel.length} of ${L.meanings.length} from the dictionary</span></label><div class="picked"><div>${a.mSel.map(k => `<div><span class="muted">(${esc(L.meanings[k].pos)})</span> ${esc(L.meanings[k].def)}</div>`).join('')}</div>${L.meanings.length > 1 ? `<button class="link" onclick="A.togglePick('pickM')">Change</button>` : ''}</div></div>`;
   const exPick = a.examples.length > 1 ? (a.pickE
-    ? `<div><label>Suggested examples (pick one)</label><div class="opts">${a.examples.map((e, i) => `<button class="meaning ${a.exIdx === i ? 'on' : ''}" onclick="A.pickExample(${i})"><span class="ex" style="font-size:14.5px">“${esc(e.text)}”</span><br><span class="small muted">${esc(e.src)}</span></button>`).join('')}</div></div>`
-    : `<p class="small muted">Example: ${esc(a.examples[a.exIdx]?.src || 'your own')} · <button class="link" onclick="A.togglePick('pickE')">${a.examples.length - 1} more suggestion${a.examples.length > 2 ? 's' : ''}</button></p>`) : '';
+    ? `<div><label>Suggested examples (tick one or more)</label><div class="opts">${a.examples.map((e, i) => `<button class="meaning check ${a.exSel.includes(i) ? 'on' : ''}" role="checkbox" aria-checked="${a.exSel.includes(i)}" onclick="A.pickExample(${i})"><span class="box">${a.exSel.includes(i) ? '✓' : ''}</span><span><span class="ex" style="font-size:14.5px">“${esc(e.text)}”</span><br><span class="small muted">${esc(e.src)}</span></span></button>`).join('')}</div><button class="btn ghost sm" style="margin-top:8px;width:100%" onclick="A.togglePick('pickE')">Done</button></div>`
+    : `<p class="small muted">${a.exSel.length} example${a.exSel.length > 1 ? 's' : ''} selected · <button class="link" onclick="A.togglePick('pickE')">Choose from ${a.examples.length} suggestions</button></p>`) : '';
   const offline = ['offline', 'slow', 'error', 'notfound'].includes(st);
   return `<div class="top"><h2>Add a word</h2><button class="btn ghost sm" onclick="A.cancelAdd()">Cancel</button></div><div class="scroll">
   <div class="field"><label for="aw">Word or phrase</label><input id="aw" value="${esc(a.word)}" maxlength="60" autocapitalize="none" autocomplete="off" ${a.word ? '' : 'data-autofocus'} oninput="UI_add('word',this.value)" onchange="A.addWordChanged()" onkeydown="if(event.key==='Enter'){event.preventDefault();A.addWordChanged()}">

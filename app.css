@@ -135,3 +135,7 @@ p{margin:0;line-height:1.45}
 pre.code{white-space:pre-wrap;font-size:12px;background:var(--accent-soft);padding:10px;border-radius:10px;overflow-x:auto}
 .syncwrap{display:inline-flex;align-items:center;gap:6px;min-width:0}
 .retry{all:unset;cursor:pointer;font-size:12px;font-weight:700;color:var(--surface);background:var(--again);padding:6px 10px;border-radius:999px;white-space:nowrap}
+.meaning.check{display:flex;gap:10px;align-items:flex-start}
+.meaning .box{flex:none;width:20px;height:20px;border:2px solid var(--line);border-radius:5px;display:grid;place-items:center;font-size:13px;font-weight:700;color:var(--surface);margin-top:1px}
+.meaning.on .box{background:var(--accent);border-color:var(--accent)}
+.ex,.card .inner>div{white-space:pre-line}
