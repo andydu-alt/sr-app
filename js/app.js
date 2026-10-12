@@ -427,7 +427,7 @@ function startLookup() {
     a.lookup = res;
     if (res.status === 'ok') {
       if (res.base && res.word !== w.toLowerCase()) a.baseOffer = res.word;
-      if (!a.explanation) { a.mSel = [0]; a.explanation = joinDefs([res.meanings[0].def]); }
+      if (!a.explanation) { a.mSel = [0]; a.explanation = joinDefs([meaningText(res.meanings[0])]); }
       for (const m of res.meanings) if (m.example && a.examples.length < 6 && !a.examples.some(e => e.text === m.example)) a.examples.push({ text: m.example, src: 'Dictionary' });
       if (res.ipa && !a.ipa) { a.ipa = res.ipa; }
     }
@@ -460,7 +460,10 @@ A.addBack = () => { const a = UI.add; UI.addErr = null; if (a.step > 1) { a.step
 A.useBase = () => { const a = UI.add; a.word = a.baseOffer; a.baseOffer = null; startLookup(); };
 A.typeMyself = () => { const a = UI.add; if (a.lookup?.status === 'loading') a.lookup = { status: 'skipped', word: a.lookedUp }; render(); document.getElementById('ae')?.focus(); };
 const toggleIn = (arr, i) => arr.includes(i) ? arr.filter(x => x !== i) : [...arr, i].sort((x, y) => x - y);
-A.pickMeaning = i => { const a = UI.add; a.mSel = toggleIn(a.mSel, i); a.explanation = a.mSel.length ? joinDefs(a.mSel.map(k => a.lookup.meanings[k].def)) : ''; render(); };
+const meaningText = m => (m.pos ? `(${m.pos}) ` : '') + m.def;
+A.pickMeaning = i => { const a = UI.add; a.mSel = toggleIn(a.mSel, i); a.explanation = a.mSel.length ? joinDefs(a.mSel.map(k => meaningText(a.lookup.meanings[k]))) : ''; render(); };
+A.allMeanings = () => { const a = UI.add; const n = a.lookup.meanings.length; a.mSel = a.mSel.length === n ? [] : [...Array(n).keys()]; a.explanation = a.mSel.length ? joinDefs(a.mSel.map(k => meaningText(a.lookup.meanings[k]))) : ''; render(); };
+A.allExamples = () => { const a = UI.add; const n = a.examples.length; a.exSel = a.exSel.length === n ? [] : [...Array(n).keys()]; a.example = a.exSel.map(k => a.examples[k].text).join('\n'); render(); };
 A.pickExample = i => { const a = UI.add; a.exSel = toggleIn(a.exSel, i); a.example = a.exSel.map(k => a.examples[k].text).join('\n'); render(); };
 A.retryLookup = () => startLookup();
 const spinner = text => `<div class="loading"><span class="spinner" aria-hidden="true"></span><span>${esc(text)}</span></div>`;
@@ -480,13 +483,13 @@ V.add = () => {
     else if (st === 'offline') list = `<div class="warn"><b>Offline.</b> Type the explanation yourself. The card saves now and syncs later.</div>`;
     else if (st === 'slow' || st === 'error') list = `<div class="warn"><b>Connection is slow.</b> Type the explanation yourself, or <button class="link" onclick="A.retryLookup()">try again</button>.</div>`;
     else if (st === 'notfound') list = `<div class="warn"><b>No dictionary entry for “${esc(L.word)}”.</b> Phrases and idioms are often missing. Type the explanation yourself.</div>`;
-    else if (st === 'ok') list = `<div><label>Dictionary meanings (tick one or more)</label><div class="opts">${L.meanings.map((m, i) => `<button class="meaning check ${a.mSel.includes(i) ? 'on' : ''}" role="checkbox" aria-checked="${a.mSel.includes(i)}" onclick="A.pickMeaning(${i})"><span class="box">${a.mSel.includes(i) ? '✓' : ''}</span><span><span class="muted">(${esc(m.pos)})</span> ${esc(m.def)}</span></button>`).join('')}</div></div>`;
+    else if (st === 'ok') list = `<div><div class="listhead"><label>Dictionary meanings (tick one or more)</label>${L.meanings.length > 1 ? `<button class="link" onclick="A.allMeanings()">${a.mSel.length === L.meanings.length ? 'Clear all' : 'Select all'}</button>` : ''}</div><div class="opts">${L.meanings.map((m, i) => `<button class="meaning check ${a.mSel.includes(i) ? 'on' : ''}" role="checkbox" aria-checked="${a.mSel.includes(i)}" onclick="A.pickMeaning(${i})"><span class="box">${a.mSel.includes(i) ? '✓' : ''}</span><span>${esc(meaningText(m))}</span></button>`).join('')}</div></div>`;
     body = `${a.dup ? `<div class="warn"><b>“${esc(a.dup.word)}”</b> is already in ${esc(deckName(a.dup.deckId))}: <i>“${esc(a.dup.explanation || 'no explanation')}”</i>. You can still add it, for example for a different meaning.</div>` : ''}
       ${a.baseOffer ? `<div class="warn">The dictionary lists this under <b>“${esc(a.baseOffer)}”</b>. <button class="link" onclick="A.useBase()">Use “${esc(a.baseOffer)}” instead</button></div>` : ''}
       ${list}
       ${st === 'loading' ? '' : `<div class="field"><label for="ae">English explanation${st === 'ok' ? ' (edit if you like)' : ''}</label><textarea id="ae" rows="3" placeholder="A short explanation in English" oninput="UI_add('explanation',this.value)">${esc(a.explanation)}</textarea></div>`}`;
   } else if (a.step === 3) {
-    body = `${a.examples.length ? `<div><label>Suggested examples (tick one or more)</label><div class="opts">${a.examples.map((e, i) => `<button class="meaning check ${a.exSel.includes(i) ? 'on' : ''}" role="checkbox" aria-checked="${a.exSel.includes(i)}" onclick="A.pickExample(${i})"><span class="box">${a.exSel.includes(i) ? '✓' : ''}</span><span><span class="ex" style="font-size:14.5px">“${esc(e.text)}”</span><br><span class="small muted">${esc(e.src)}</span></span></button>`).join('')}</div></div>` : ''}
+    body = `${a.examples.length ? `<div><div class="listhead"><label>Suggested examples (tick one or more)</label>${a.examples.length > 1 ? `<button class="link" onclick="A.allExamples()">${a.exSel.length === a.examples.length ? 'Clear all' : 'Select all'}</button>` : ''}</div><div class="opts">${a.examples.map((e, i) => `<button class="meaning check ${a.exSel.includes(i) ? 'on' : ''}" role="checkbox" aria-checked="${a.exSel.includes(i)}" onclick="A.pickExample(${i})"><span class="box">${a.exSel.includes(i) ? '✓' : ''}</span><span>${esc(e.text)}<br><span class="small muted">${esc(e.src)}</span></span></button>`).join('')}</div></div>` : ''}
       ${a.examplesLoading ? spinner('Finding example sentences…') : (!a.examples.length ? `<p class="muted">${navigator.onLine ? 'No example sentences found.' : 'Offline.'} Write your own below.</p>` : '')}
       <div class="field"><label for="ax">Example sentence${a.exSel.length ? ' (edit if you like)' : ''}</label><textarea id="ax" rows="3" placeholder="An example sentence using the word" oninput="UI_add('example',this.value)">${esc(a.example)}</textarea></div>`;
   } else {
