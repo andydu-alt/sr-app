@@ -135,12 +135,33 @@ const userName = () => (auth.current()?.user?.name || '').split(' ')[0];
 let voices = [];
 const loadVoices = () => { try { voices = speechSynthesis.getVoices(); } catch {} };
 try { loadVoices(); speechSynthesis.onvoiceschanged = loadVoices; } catch {}
+// Best-sounding voices first: natural/neural/enhanced voices beat the old robotic ones.
+function voiceScore(v, lang) {
+  const n = v.name.toLowerCase(); let s = 0;
+  if (v.lang.replace('_', '-').toLowerCase() === lang.toLowerCase()) s += 100; else if (/^en/i.test(v.lang)) s += 10; else return -1;
+  if (/natural|neural|online/.test(n)) s += 50;
+  if (/enhanced|premium|siri/.test(n)) s += 45;
+  if (/^google/.test(n)) s += 30;
+  if (/sonia|libby|ryan|maisie|thomas|daniel|kate|serena|arthur|martha|aria|jenny|guy|samantha|ava|zoe|evan/.test(n)) s += 15;
+  if (/compact|espeak|novelty|zarvox|whisper|bad news|bells|boing|bubbles|cellos|jester|organ|superstar|trinoids|wobble|albert|fred|junior|ralph|grandma|grandpa|eddy|flo|reed|rocko|sandy|shelley/.test(n)) s -= 80;
+  if (v.localService === false) s += 5;
+  return s;
+}
+const englishVoices = lang => voices.map(v => [v, voiceScore(v, lang)]).filter(x => x[1] >= 0).sort((a, b) => b[1] - a[1]).map(x => x[0]);
+function chosenVoice() {
+  const lang = settings().accent === 'US' ? 'en-US' : 'en-GB';
+  const saved = ls.get('sr-voice', '');
+  return voices.find(v => v.name === saved) || englishVoices(lang)[0] || null;
+}
+window.ls_clearVoice = () => ls.set('sr-voice', '');
+try { speechSynthesis.addEventListener('voiceschanged', () => { if (UI.screen === 'settings') render(); }); } catch {}
+A.setVoice = name => { ls.set('sr-voice', name); A.speak('Hello! This is how SR App will read your words.'); render(); };
 A.speak = text => {
   try {
     const lang = settings().accent === 'US' ? 'en-US' : 'en-GB';
     const u = new SpeechSynthesisUtterance(text); u.lang = lang; u.rate = 0.95;
-    const v = voices.find(v => v.lang.replace('_', '-') === lang) || voices.find(v => /^en/i.test(v.lang));
-    if (v) u.voice = v;
+    const v = chosenVoice();
+    if (v) { u.voice = v; u.lang = v.lang; }
     speechSynthesis.cancel(); speechSynthesis.speak(u);
   } catch { toast('Audio is not available in this browser.'); }
 };
@@ -702,7 +723,11 @@ V.settings = () => {
   <div class="toggle"><span><label for="snp" style="margin:0;color:var(--ink);font-size:14px;font-weight:400">New cards per day</label></span><input id="snp" type="number" inputmode="numeric" min="0" max="200" value="${st.newPerDay}" style="width:90px" onchange="A.setSetting('newPerDay',this.value,0,200)"></div>
   <div class="toggle"><span><label for="srp" style="margin:0;color:var(--ink);font-size:14px;font-weight:400">Reviews per day</label><span class="small muted">Most overdue first when there are more</span></span><input id="srp" type="number" inputmode="numeric" min="10" max="9999" value="${st.reviewsPerDay}" style="width:90px" onchange="A.setSetting('reviewsPerDay',this.value,10,9999)"></div>
   <div class="toggle"><span>Retention target<br><span class="small muted">Higher = more reviews</span></span><span style="display:flex;gap:8px;align-items:center"><input type="range" min="80" max="95" value="${st.retention}" aria-label="Retention target" oninput="this.nextElementSibling.textContent=this.value+'%'" onchange="A.setSetting('retention',this.value,80,95)" style="width:110px"><b>${st.retention}%</b></span></div>
-  <div class="toggle"><span>Voice accent</span><div class="seg">${['UK', 'US'].map(a => `<button class="${st.accent === a ? 'on' : ''}" onclick="A.setSetting('accent','${a}')">${a}</button>`).join('')}</div></div>
+  <div class="toggle"><span>Voice accent</span><div class="seg">${['UK', 'US'].map(a => `<button class="${st.accent === a ? 'on' : ''}" onclick="ls_clearVoice();A.setSetting('accent','${a}')">${a}</button>`).join('')}</div></div>
+  <div class="toggle"><span><label for="svoice" style="margin:0;color:var(--ink);font-size:14px;font-weight:400">Voice on this device</label><span class="small muted">Pick the one that sounds best</span></span>
+   <span style="display:flex;gap:6px;align-items:center;min-width:0">${(() => { const list = englishVoices(st.accent === 'US' ? 'en-US' : 'en-GB'); const cur = chosenVoice();
+     return list.length ? `<select id="svoice" style="max-width:170px" onchange="A.setVoice(this.value)">${list.map(v => `<option value="${esc(v.name)}" ${cur && cur.name === v.name ? 'selected' : ''}>${esc(v.name.replace(/^Microsoft /, '').replace(/ - English.*$/, '').replace(/ Online \(Natural\)/, ' (Natural)'))} · ${esc(v.lang)}</option>`).join('')}</select>` : '<span class="small muted">No English voices found</span>'; })()}
+   <button class="speak" aria-label="Test voice" onclick="A.speak('Hello! This is how SR App will read your words.')">${ICON.speak}</button></span></div>
   <div class="toggle" style="flex-direction:column;align-items:flex-start"><span>Study modes <span class="small muted">(at least one stays on)</span></span><div class="chips">${Object.keys(MODE_NAME).map(k => `<button class="chip ${st.modes[k] ? 'on' : ''}" onclick="A.toggleMode('${k}')">${MODE_NAME[k]}</button>`).join('')}</div></div>
   <div class="toggle"><span>Theme</span><div class="seg">${[['system', 'System'], ['light', 'Light'], ['dark', 'Dark']].map(([v, n]) => `<button class="${st.theme === v ? 'on' : ''}" onclick="A.setSetting('theme','${v}')">${n}</button>`).join('')}</div></div>
   <div class="toggle"><span>Sync<br><span class="small muted">${{ synced: 'All changes synced', syncing: 'Syncing…', offline: 'Offline — saved on this device', failed: 'Sync failed', login: 'Log in again to sync', unavailable: 'Sync unavailable' }[s.state]}${store.outbox.size ? ` · ${store.outbox.size} waiting` : ''}</span></span><button class="chip" onclick="${s.state === 'login' ? 'A.relogin()' : 'A.syncNow()'}">${s.state === 'login' ? 'Log in' : 'Sync now'}</button></div>
