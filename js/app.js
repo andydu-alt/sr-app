@@ -111,13 +111,14 @@ function tabs() {
 }
 function syncPill() {
   const s = sync.status.state;
-  const [cls, label] = { synced: ['', 'Synced'], syncing: ['busy', 'Syncing…'], offline: ['off', 'Offline · saved here'], failed: ['fail', 'Sync failed'],
-    login: ['fail', 'Log in to sync'], unavailable: ['fail', 'Sync unavailable'] }[s] || ['', 'Synced'];
+  const [cls, label] = { synced: ['', 'Synced'], syncing: ['busy', 'Syncing…'], offline: ['off', 'Offline · saved here'], failed: ['fail', 'Sync failed · Retry'],
+    login: ['fail', 'Log in to sync'], unavailable: ['fail', 'Sync unavailable · Retry'] }[s] || ['', 'Synced'];
   return `<button id="syncpill" class="pill ${cls}" onclick="A.syncInfo()" aria-label="Sync status: ${label}"><i></i>${label}</button>`;
 }
 A.syncInfo = () => {
   const s = sync.status;
   if (s.state === 'login') return A.relogin();
+  if (s.state === 'failed' || s.state === 'unavailable') { toast('Trying to sync…'); return sync.syncNow().then(() => toast(sync.status.state === 'synced' ? 'Synced.' : 'Still can’t reach the server. Your changes are safe on this device.')); }
   const pending = store.outbox.size;
   modal({ title: { synced: 'All changes synced', syncing: 'Syncing…', offline: 'Offline', failed: 'Sync failed', unavailable: 'Sync unavailable' }[s.state] || 'Sync',
     body: (s.message || (s.state === 'offline' ? 'You can keep studying. Changes are saved on this device and sync when you are back online.' : 'Your cards are the same on all your devices.'))
