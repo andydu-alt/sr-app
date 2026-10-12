@@ -487,11 +487,11 @@ V.add = () => {
     body = `${a.dup ? `<div class="warn"><b>“${esc(a.dup.word)}”</b> is already in ${esc(deckName(a.dup.deckId))}: <i>“${esc(a.dup.explanation || 'no explanation')}”</i>. You can still add it, for example for a different meaning.</div>` : ''}
       ${a.baseOffer ? `<div class="warn">The dictionary lists this under <b>“${esc(a.baseOffer)}”</b>. <button class="link" onclick="A.useBase()">Use “${esc(a.baseOffer)}” instead</button></div>` : ''}
       ${list}
-      ${st === 'loading' ? '' : `<div class="field"><label for="ae">English explanation${st === 'ok' ? ' (edit if you like)' : ''}</label><textarea id="ae" rows="3" placeholder="A short explanation in English" oninput="UI_add('explanation',this.value)">${esc(a.explanation)}</textarea></div>`}`;
+      ${st === 'loading' ? '' : `<div class="field"><label for="ae">English explanation</label><textarea id="ae" rows="3" placeholder="A short explanation in English" oninput="UI_add('explanation',this.value)">${esc(a.explanation)}</textarea></div>`}`;
   } else if (a.step === 3) {
     body = `${a.examples.length ? `<div><div class="listhead"><label>Suggested examples (tick one or more)</label>${a.examples.length > 1 ? `<button class="link" onclick="A.allExamples()">${a.exSel.length === a.examples.length ? 'Clear all' : 'Select all'}</button>` : ''}</div><div class="opts">${a.examples.map((e, i) => `<button class="meaning check ${a.exSel.includes(i) ? 'on' : ''}" role="checkbox" aria-checked="${a.exSel.includes(i)}" onclick="A.pickExample(${i})"><span class="box">${a.exSel.includes(i) ? '✓' : ''}</span><span>${esc(e.text)}<br><span class="small muted">${esc(e.src)}</span></span></button>`).join('')}</div></div>` : ''}
       ${a.examplesLoading ? spinner('Finding example sentences…') : (!a.examples.length ? `<p class="muted">${navigator.onLine ? 'No example sentences found.' : 'Offline.'} Write your own below.</p>` : '')}
-      <div class="field"><label for="ax">Example sentence${a.exSel.length ? ' (edit if you like)' : ''}</label><textarea id="ax" rows="3" placeholder="An example sentence using the word" oninput="UI_add('example',this.value)">${esc(a.example)}</textarea></div>`;
+      <div class="field"><label for="ax">Example sentence</label><textarea id="ax" rows="3" placeholder="An example sentence using the word" oninput="UI_add('example',this.value)">${esc(a.example)}</textarea></div>`;
   } else {
     const empty = !a.explanation.trim() || !a.example.trim();
     body = `<div class="field"><label for="ai">Pronunciation (IPA)</label><input id="ai" value="${esc(a.ipa)}" placeholder="${a.ipaLoading ? 'Looking up…' : 'Not found — you can type it'}" oninput="UI_add('ipa',this.value)">${a.ipaLoading ? spinner('Looking up pronunciation…') : ''}</div>

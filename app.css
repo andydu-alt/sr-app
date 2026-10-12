@@ -150,3 +150,6 @@ pre.code{white-space:pre-wrap;font-size:12px;background:var(--accent-soft);paddi
 @media (prefers-reduced-motion:no-preference){.spinner{animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}}
 .listhead{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:4px}.listhead label{margin:0}
 .meaning.check.on{background:transparent;border-color:var(--line)}
+.meaning.check,.meaning.check.on{border:0;background:transparent;padding:6px 2px;border-radius:0}
+.opts:has(.meaning.check){gap:2px}
+#ae,#ax{font-size:14px}
