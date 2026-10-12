@@ -66,7 +66,9 @@ const FORM_OF = /^(?:.*?\b)?(?:plural|simple past|past participle|present partic
 // → {status:'ok'|'notfound'|'slow'|'offline'|'error', word, meanings, ipa, base}
 export async function lookupWord(word) {
   if (!navigator.onLine) return { status: 'offline', word, meanings: [], ipa: '' };
-  const tries = [word.trim(), ...baseForms(word)];
+  const w0 = word.trim().replace(/\s+/g, ' ');
+  // Wiktionary is case-sensitive ("Get up" fails, "get up" works): try lower case first, then as typed.
+  const tries = [...new Set([w0.toLowerCase(), w0, ...baseForms(w0)])];
   let sawError = false;
   for (let i = 0; i < tries.length && i < 4; i++) {
     const r = await lookupOne(tries[i]);
