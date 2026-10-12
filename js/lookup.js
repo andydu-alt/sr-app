@@ -100,3 +100,28 @@ export async function exampleSentences(word, max = 4) {
   const rest = texts.filter(t => !containsWord(t, word));
   return [...exact, ...rest].slice(0, max);
 }
+
+// Pronunciation from Wiktionary's page source: prefers the British (RP/UK) line. Phrases without their own entry
+// are built from each word ("get up" → /ɡet ʌp/).
+const WIKI_API = 'https://en.wiktionary.org/w/api.php?action=parse&prop=wikitext&format=json&origin=*&redirects=1&page=';
+async function ipaOf(w) {
+  const r = await getJSON(WIKI_API + encodeURIComponent(w.replace(/ /g, '_')), 5000);
+  const text = r.data && r.data.parse && r.data.parse.wikitext && r.data.parse.wikitext['*'];
+  if (!text) return '';
+  const english = text.split(/\n==(?!=)/).find(s => /^\s*English\s*==/.test(s)) || text;
+  const lines = (english.match(/.*\{\{IPA\|en\|.*$/gm) || []);
+  if (!lines.length) return '';
+  const pick = lines.find(l => /a=[^|}]*(RP|UK)/.test(l)) || lines.find(l => !/a=|q1?=/.test(l)) || lines[0];
+  const m = /\{\{IPA\|en\|([^}]*)\}\}/.exec(pick); if (!m) return '';
+  const first = m[1].split('|').find(p => /^\/.+\/$/.test(p.trim())) || m[1].split('|').find(p => /^\[.+\]$/.test(p.trim())) || '';
+  return first.trim().replace(/ɹ/g, 'r').replace(/ɛ/g, 'e').replace(/ɝ/g, 'ɜː').replace(/ɚ/g, 'ə');
+}
+export async function pronunciation(word) {
+  if (!navigator.onLine) return '';
+  const w = word.trim().toLowerCase().replace(/\s+/g, ' ');
+  const whole = await ipaOf(w);
+  if (whole || !w.includes(' ')) return whole;
+  const parts = await Promise.all(w.split(' ').map(ipaOf));
+  if (parts.some(p => !p)) return '';
+  return '/' + parts.map(p => p.replace(/^[\/\[]|[\/\]]$/g, '')).join(' ') + '/';
+}

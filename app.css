@@ -139,3 +139,12 @@ pre.code{white-space:pre-wrap;font-size:12px;background:var(--accent-soft);paddi
 .meaning .box{flex:none;width:20px;height:20px;border:2px solid var(--line);border-radius:5px;display:grid;place-items:center;font-size:13px;font-weight:700;color:var(--surface);margin-top:1px}
 .meaning.on .box{background:var(--accent);border-color:var(--accent)}
 .ex,.card .inner>div{white-space:pre-line}
+.steps{display:flex;gap:6px;font-size:12px;color:var(--muted);flex-wrap:wrap}
+.steps span{padding:4px 10px;border-radius:999px;background:var(--accent-soft)}
+.steps span.on{background:var(--accent);color:var(--surface);font-weight:700}
+.steps span.done{color:var(--accent);font-weight:600}
+.wordline{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.wordline .w{font-family:var(--font-word);font-size:26px;font-weight:700}
+.loading{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:14px;padding:6px 0}
+.spinner{width:22px;height:22px;border:3px solid var(--accent-soft);border-top-color:var(--accent);border-radius:50%;flex:none}
+@media (prefers-reduced-motion:no-preference){.spinner{animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}}

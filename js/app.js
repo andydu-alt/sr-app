@@ -4,7 +4,7 @@ import * as auth from './auth.js';
 import * as sync from './sync.js';
 import { makeScheduler, replay, cardInfo, previewIntervals, buildQueue, pickNext, progress, dayStart, nextDayStart, fmtInterval, LEECH_LAPSES, RATING_NAME } from './sched.js';
 import { esc, norm, canon, gradeTyped, diff, containsWord, clozeSplit, cleanSelection, similar, parseDelimited } from './text.js';
-import { lookupWord, exampleSentences } from './lookup.js';
+import { lookupWord, exampleSentences, pronunciation } from './lookup.js';
 import { STARTER } from './starter.js';
 import { IS_NETLIFY_COPY, MAIN_APP_URL } from './config.js';
 
@@ -397,91 +397,120 @@ V.done = () => {
 window.UI_deck = () => (UI.session && UI.session.deckId) || null;
 
 // ───────── Add panel ─────────
+// Add panel: a 4-step wizard — 1 Word, 2 Meaning, 3 Example, 4 Details.
 A.openAdd = (p = {}) => {
   const decks = model().decks;
   const last = ls.get('sr-lastDeck', ''); const deckId = p.deckId || (decks.find(d => d.id === last) ? last : decks[0]?.id) || '';
   const { word, cut } = cleanSelection(p.word || '', p.sentence || '');
-  UI.add = { word, cut, sentence: (p.sentence || '').trim(), deckId, explanation: '', example: (p.sentence || '').trim(), ipa: '', notes: '', tags: '', fillLater: true,
-    lookup: null, mSel: [0], pickM: false, examples: [], exSel: [0], pickE: false, dup: null, autoExp: '', autoEx: (p.sentence || '').trim(), from: p.from || '', newDeck: !decks.length };
+  const sentence = (p.sentence || '').trim();
+  UI.add = { step: word ? 2 : 1, word, cut, sentence, deckId, explanation: '', example: sentence, ipa: '', notes: '', tags: '', fillLater: true,
+    lookup: null, examplesLoading: false, ipaLoading: false, mSel: [], examples: [], exSel: [], dup: null, from: p.from || '', newDeck: !decks.length, lookedUp: '' };
+  UI.addErr = null;
   UI.addReturn = UI.screen === 'add' ? UI.addReturn : (['home', 'deck', 'decks'].includes(UI.screen) ? UI.screen : 'home');
   go('add');
-  if (word) runLookup();
+  if (word) startLookup();
 };
-async function runLookup() {
-  const a = UI.add; const w = a.word.trim(); if (!w) return;
-  a.lookup = { status: 'loading', word: w }; a.pickM = false; a.pickE = false; render();
-  const [res, sentences] = await Promise.all([lookupWord(w), exampleSentences(w)]);
-  if (UI.screen !== 'add' || UI.add !== a || a.word.trim() !== w) return;
-  a.lookup = res;
-  const ex = [];
-  if (a.sentence) ex.push({ text: a.sentence, src: 'From the page you highlighted' });
-  for (const m of res.meanings || []) if (m.example && ex.length < 5 && !ex.some(e => e.text === m.example)) ex.push({ text: m.example, src: 'Dictionary' });
-  for (const t of sentences) if (ex.length < 5 && !ex.some(e => e.text === t)) ex.push({ text: t, src: 'Tatoeba sentence library' });
-  a.examples = ex;
-  if (res.status === 'ok') {
-    a.mSel = [0];
-    if (!a.explanation || a.explanation === a.autoExp) { a.explanation = a.autoExp = res.meanings[0]?.def || ''; }
-    if (!a.ipa) a.ipa = res.ipa || '';
-    if (res.base && res.word !== w && a.word.trim() === w) { a.baseOffer = res.word; }
-  }
-  if ((!a.example || a.example === a.autoEx) && ex.length) { a.exSel = [0]; a.example = a.autoEx = ex[0].text; }
-  render();
-}
-window.UI_add = (k, v) => { if (UI.add) UI.add[k] = v; };
-A.addWordChanged = () => { const a = UI.add; const v = document.getElementById('aw').value; if (v.trim() && v.trim() !== (a.lookup?.word || '')) { a.word = v; a.dup = null; a.baseOffer = null; runLookup(); } };
-A.useBase = () => { const a = UI.add; a.word = a.baseOffer; a.baseOffer = null; render(); };
+function findDup(word) { return store.all('card').find(c => canon(c.word) === canon(word) && store.get(c.deckId)) || null; }
 // Several meanings → numbered lines; several examples → one per line.
 const joinDefs = defs => defs.length === 1 ? defs[0] : defs.map((d, i) => `${i + 1}. ${d}`).join('\n');
-const toggleIn = (arr, i) => arr.includes(i) ? (arr.length > 1 ? arr.filter(x => x !== i) : arr) : [...arr, i].sort((x, y) => x - y);
-A.pickMeaning = i => { const a = UI.add; a.mSel = toggleIn(a.mSel, i); a.explanation = a.autoExp = joinDefs(a.mSel.map(k => a.lookup.meanings[k].def)); render(); };
-A.pickExample = i => { const a = UI.add; a.exSel = toggleIn(a.exSel, i); a.example = a.autoEx = a.exSel.map(k => a.examples[k].text).join('\n'); render(); };
-A.togglePick = k => { UI.add[k] = !UI.add[k]; render(); };
-A.retryLookup = () => runLookup();
+function startLookup() {
+  const a = UI.add; const w = a.word.trim().replace(/\s+/g, ' '); if (!w) return;
+  a.lookedUp = w; a.dup = findDup(w); a.baseOffer = null;
+  a.lookup = { status: 'loading', word: w }; a.examplesLoading = true; a.ipaLoading = true;
+  a.mSel = []; a.exSel = []; a.explanation = ''; a.ipa = ''; a.example = a.sentence;
+  a.examples = a.sentence ? [{ text: a.sentence, src: 'From the page you highlighted' }] : [];
+  if (a.sentence) a.exSel = [0];
+  render();
+  const still = () => UI.screen === 'add' && UI.add === a && a.lookedUp === w;
+  lookupWord(w).then(async res => {
+    if (!still()) return;
+    a.lookup = res;
+    if (res.status === 'ok') {
+      if (res.base && res.word !== w.toLowerCase()) a.baseOffer = res.word;
+      if (!a.explanation) { a.mSel = [0]; a.explanation = joinDefs([res.meanings[0].def]); }
+      for (const m of res.meanings) if (m.example && a.examples.length < 6 && !a.examples.some(e => e.text === m.example)) a.examples.push({ text: m.example, src: 'Dictionary' });
+      if (res.ipa && !a.ipa) { a.ipa = res.ipa; }
+    }
+    if (!a.exSel.length && a.examples.length && !a.example) { a.exSel = [0]; a.example = a.examples[0].text; }
+    render();
+    if (!a.ipa) { const ipa = await pronunciation(res.word || w); if (still() && !a.ipa) a.ipa = ipa; }
+    if (still()) { a.ipaLoading = false; render(); }
+  });
+  exampleSentences(w).then(list => {
+    if (!still()) return;
+    for (const t of list) if (a.examples.length < 6 && !a.examples.some(e => e.text === t)) a.examples.push({ text: t, src: 'Tatoeba sentence library' });
+    if (!a.exSel.length && a.examples.length && !a.example) { a.exSel = [0]; a.example = a.examples[0].text; }
+    a.examplesLoading = false; render();
+  });
+}
+window.UI_add = (k, v) => { if (UI.add) UI.add[k] = v; };
+A.addNext = () => {
+  const a = UI.add; UI.addErr = null;
+  if (a.step === 1) {
+    a.word = (document.getElementById('aw')?.value ?? a.word).trim().replace(/\s+/g, ' ');
+    if (!a.word) { UI.addErr = 'Type a word or phrase.'; return render(); }
+    a.step = 2;
+    if (a.word !== a.lookedUp) startLookup(); else render();
+    return;
+  }
+  if (a.step < 4) { a.step++; render(); const sc = $app.querySelector('.scroll'); if (sc) sc.scrollTop = 0; return; }
+  A.saveAdd();
+};
+A.addBack = () => { const a = UI.add; UI.addErr = null; if (a.step > 1) { a.step--; render(); } };
+A.useBase = () => { const a = UI.add; a.word = a.baseOffer; a.baseOffer = null; startLookup(); };
+A.typeMyself = () => { const a = UI.add; if (a.lookup?.status === 'loading') a.lookup = { status: 'skipped', word: a.lookedUp }; render(); document.getElementById('ae')?.focus(); };
+const toggleIn = (arr, i) => arr.includes(i) ? arr.filter(x => x !== i) : [...arr, i].sort((x, y) => x - y);
+A.pickMeaning = i => { const a = UI.add; a.mSel = toggleIn(a.mSel, i); a.explanation = a.mSel.length ? joinDefs(a.mSel.map(k => a.lookup.meanings[k].def)) : ''; render(); };
+A.pickExample = i => { const a = UI.add; a.exSel = toggleIn(a.exSel, i); a.example = a.exSel.map(k => a.examples[k].text).join('\n'); render(); };
+A.retryLookup = () => startLookup();
+const spinner = text => `<div class="loading"><span class="spinner" aria-hidden="true"></span><span>${esc(text)}</span></div>`;
 V.add = () => {
   const a = UI.add; const decks = model().decks; const L = a.lookup || {}; const st = L.status;
-  let mid = '';
-  if (st === 'loading') mid = `<div><label>Looking up “${esc(L.word)}”…</label><div class="opts"><div class="skel"></div><div class="skel" style="width:80%"></div><div class="skel" style="width:60%"></div></div><p class="hint">You can type below while this loads.</p></div>`;
-  else if (st === 'offline') mid = `<div class="warn"><b>Offline.</b> Type the details yourself. The card saves now and syncs later.</div>`;
-  else if (st === 'slow' || st === 'error') mid = `<div class="warn"><b>Connection is slow.</b> Type the details yourself, or <button class="link" onclick="A.retryLookup()">try again</button>.</div>`;
-  else if (st === 'notfound') mid = `<div class="warn"><b>No dictionary entry for “${esc(L.word)}”.</b> Phrases and idioms are often missing. Type the details yourself.</div>`;
-  else if (st === 'ok' && L.meanings.length) mid = a.pickM
-    ? `<div><label>Dictionary meanings (tick one or more)</label><div class="opts">${L.meanings.map((m, i) => `<button class="meaning check ${a.mSel.includes(i) ? 'on' : ''}" role="checkbox" aria-checked="${a.mSel.includes(i)}" onclick="A.pickMeaning(${i})"><span class="box">${a.mSel.includes(i) ? '✓' : ''}</span><span><span class="muted">(${esc(m.pos)})</span> ${esc(m.def)}</span></button>`).join('')}</div><button class="btn ghost sm" style="margin-top:8px;width:100%" onclick="A.togglePick('pickM')">Done</button></div>`
-    : `<div><label>Meaning <span class="muted" style="font-weight:400">· ${a.mSel.length} of ${L.meanings.length} from the dictionary</span></label><div class="picked"><div>${a.mSel.map(k => `<div><span class="muted">(${esc(L.meanings[k].pos)})</span> ${esc(L.meanings[k].def)}</div>`).join('')}</div>${L.meanings.length > 1 ? `<button class="link" onclick="A.togglePick('pickM')">Change</button>` : ''}</div></div>`;
-  const exPick = a.examples.length > 1 ? (a.pickE
-    ? `<div><label>Suggested examples (tick one or more)</label><div class="opts">${a.examples.map((e, i) => `<button class="meaning check ${a.exSel.includes(i) ? 'on' : ''}" role="checkbox" aria-checked="${a.exSel.includes(i)}" onclick="A.pickExample(${i})"><span class="box">${a.exSel.includes(i) ? '✓' : ''}</span><span><span class="ex" style="font-size:14.5px">“${esc(e.text)}”</span><br><span class="small muted">${esc(e.src)}</span></span></button>`).join('')}</div><button class="btn ghost sm" style="margin-top:8px;width:100%" onclick="A.togglePick('pickE')">Done</button></div>`
-    : `<p class="small muted">${a.exSel.length} example${a.exSel.length > 1 ? 's' : ''} selected · <button class="link" onclick="A.togglePick('pickE')">Choose from ${a.examples.length} suggestions</button></p>`) : '';
-  const offline = ['offline', 'slow', 'error', 'notfound'].includes(st);
-  return `<div class="top"><h2>Add a word</h2><button class="btn ghost sm" onclick="A.cancelAdd()">Cancel</button></div><div class="scroll">
-  <div class="field"><label for="aw">Word or phrase</label><input id="aw" value="${esc(a.word)}" maxlength="60" autocapitalize="none" autocomplete="off" ${a.word ? '' : 'data-autofocus'} oninput="UI_add('word',this.value)" onchange="A.addWordChanged()" onkeydown="if(event.key==='Enter'){event.preventDefault();A.addWordChanged()}">
-   ${a.cut ? '<span class="hint">The highlighted text was long, so it was shortened to 60 characters.</span>' : ''}</div>
-  ${a.baseOffer ? `<div class="warn">Found the dictionary entry for <b>“${esc(a.baseOffer)}”</b>. <button class="link" onclick="A.useBase()">Use “${esc(a.baseOffer)}” as the word</button></div>` : ''}
-  ${a.dup ? `<div class="warn"><b>“${esc(a.dup.word)}”</b> is already in ${esc(deckName(a.dup.deckId))}: <i>“${esc(a.dup.explanation || 'no explanation')}”</i>. Save again if this is a different meaning.</div>` : ''}
-  ${mid}
-  <div class="field"><label for="ae">English explanation</label><textarea id="ae" placeholder="A short explanation in English" oninput="UI_add('explanation',this.value)">${esc(a.explanation)}</textarea></div>
-  ${exPick}
-  <div class="field"><label for="ax">Example sentence</label><textarea id="ax" placeholder="An example sentence using the word" oninput="UI_add('example',this.value)">${esc(a.example)}</textarea></div>
-  <div class="field"><label for="ai">Pronunciation (IPA, optional)</label><input id="ai" value="${esc(a.ipa)}" oninput="UI_add('ipa',this.value)"></div>
-  <div class="field"><label for="an">Notes (optional)</label><input id="an" value="${esc(a.notes)}" oninput="UI_add('notes',this.value)"></div>
-  <div class="field"><label for="ag">Tags (optional, separate with commas)</label><input id="ag" value="${esc(a.tags)}" placeholder="e.g. email, meetings" oninput="UI_add('tags',this.value)"></div>
-  ${offline || !navigator.onLine ? `<label style="display:flex;gap:8px;align-items:center;font-weight:500;color:var(--ink);margin:0"><input type="checkbox" ${a.fillLater ? 'checked' : ''} onchange="UI_add('fillLater',this.checked)">Mark “Fill later” if I leave fields empty</label>` : ''}
-  ${UI.addErr ? `<div class="err">${esc(UI.addErr)}</div>` : ''}
-  </div>
-  <div class="foot">${decks.length && !a.newDeck ? `<select id="ad" aria-label="Deck" style="flex:1;min-width:0" onchange="if(this.value==='__new'){UI_add('newDeck',true);A.rerender()}else UI_add('deckId',this.value)">${decks.map(d => `<option value="${d.id}" ${d.id === a.deckId ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}<option value="__new">+ New deck…</option></select>`
-    : `<input id="adn" aria-label="New deck name" placeholder="New deck name" style="flex:1;min-width:0" value="${esc(a.newDeckName || 'My words')}" oninput="UI_add('newDeckName',this.value)">`}
-   <button class="btn" onclick="A.saveAdd()">${a.dup ? 'Save anyway' : 'Save'}</button></div>`;
+  const names = ['Word', 'Meaning', 'Example', 'Details'];
+  const steps = `<div class="steps" aria-label="Step ${a.step} of 4">${names.map((n, i) => `<span class="${i + 1 === a.step ? 'on' : i + 1 < a.step ? 'done' : ''}">${i + 1}. ${n}</span>`).join('')}</div>`;
+  const wordLine = a.step > 1 ? `<div class="wordline"><span class="w">${esc(a.word)}</span>${a.ipa ? `<span class="muted">${esc(a.ipa)}</span>` : ''}</div>` : '';
+  let body = '';
+  if (a.step === 1) {
+    body = `<div class="field"><label for="aw">Word or phrase</label><input id="aw" value="${esc(a.word)}" maxlength="60" autocapitalize="none" autocomplete="off" data-autofocus
+      oninput="UI_add('word',this.value);document.getElementById('anext').disabled=!this.value.trim()" onkeydown="if(event.key==='Enter'){event.preventDefault();A.addNext()}">
+      ${a.cut ? '<span class="hint">The highlighted text was long, so it was shortened to 60 characters.</span>' : '<span class="hint">Then tap Next to look it up.</span>'}</div>`;
+  } else if (a.step === 2) {
+    let list = '';
+    if (st === 'loading') list = `${spinner(`Looking up “${L.word}”…`)}<button class="link" onclick="A.typeMyself()">Don't wait, I'll type it myself</button>`;
+    else if (st === 'offline') list = `<div class="warn"><b>Offline.</b> Type the explanation yourself. The card saves now and syncs later.</div>`;
+    else if (st === 'slow' || st === 'error') list = `<div class="warn"><b>Connection is slow.</b> Type the explanation yourself, or <button class="link" onclick="A.retryLookup()">try again</button>.</div>`;
+    else if (st === 'notfound') list = `<div class="warn"><b>No dictionary entry for “${esc(L.word)}”.</b> Phrases and idioms are often missing. Type the explanation yourself.</div>`;
+    else if (st === 'ok') list = `<div><label>Dictionary meanings (tick one or more)</label><div class="opts">${L.meanings.map((m, i) => `<button class="meaning check ${a.mSel.includes(i) ? 'on' : ''}" role="checkbox" aria-checked="${a.mSel.includes(i)}" onclick="A.pickMeaning(${i})"><span class="box">${a.mSel.includes(i) ? '✓' : ''}</span><span><span class="muted">(${esc(m.pos)})</span> ${esc(m.def)}</span></button>`).join('')}</div></div>`;
+    body = `${a.dup ? `<div class="warn"><b>“${esc(a.dup.word)}”</b> is already in ${esc(deckName(a.dup.deckId))}: <i>“${esc(a.dup.explanation || 'no explanation')}”</i>. You can still add it, for example for a different meaning.</div>` : ''}
+      ${a.baseOffer ? `<div class="warn">The dictionary lists this under <b>“${esc(a.baseOffer)}”</b>. <button class="link" onclick="A.useBase()">Use “${esc(a.baseOffer)}” instead</button></div>` : ''}
+      ${list}
+      ${st === 'loading' ? '' : `<div class="field"><label for="ae">English explanation${st === 'ok' ? ' (edit if you like)' : ''}</label><textarea id="ae" rows="3" placeholder="A short explanation in English" oninput="UI_add('explanation',this.value)">${esc(a.explanation)}</textarea></div>`}`;
+  } else if (a.step === 3) {
+    body = `${a.examples.length ? `<div><label>Suggested examples (tick one or more)</label><div class="opts">${a.examples.map((e, i) => `<button class="meaning check ${a.exSel.includes(i) ? 'on' : ''}" role="checkbox" aria-checked="${a.exSel.includes(i)}" onclick="A.pickExample(${i})"><span class="box">${a.exSel.includes(i) ? '✓' : ''}</span><span><span class="ex" style="font-size:14.5px">“${esc(e.text)}”</span><br><span class="small muted">${esc(e.src)}</span></span></button>`).join('')}</div></div>` : ''}
+      ${a.examplesLoading ? spinner('Finding example sentences…') : (!a.examples.length ? `<p class="muted">${navigator.onLine ? 'No example sentences found.' : 'Offline.'} Write your own below.</p>` : '')}
+      <div class="field"><label for="ax">Example sentence${a.exSel.length ? ' (edit if you like)' : ''}</label><textarea id="ax" rows="3" placeholder="An example sentence using the word" oninput="UI_add('example',this.value)">${esc(a.example)}</textarea></div>`;
+  } else {
+    const empty = !a.explanation.trim() || !a.example.trim();
+    body = `<div class="field"><label for="ai">Pronunciation (IPA)</label><input id="ai" value="${esc(a.ipa)}" placeholder="${a.ipaLoading ? 'Looking up…' : 'Not found — you can type it'}" oninput="UI_add('ipa',this.value)">${a.ipaLoading ? spinner('Looking up pronunciation…') : ''}</div>
+      <div class="field"><label for="ad">Deck</label>${decks.length && !a.newDeck ? `<select id="ad" onchange="if(this.value==='__new'){UI_add('newDeck',true);A.rerender()}else UI_add('deckId',this.value)">${decks.map(d => `<option value="${d.id}" ${d.id === a.deckId ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}<option value="__new">+ New deck…</option></select>`
+        : `<input id="adn" placeholder="New deck name" value="${esc(a.newDeckName || 'My words')}" oninput="UI_add('newDeckName',this.value)">`}</div>
+      <div class="field"><label for="an">Notes (optional)</label><input id="an" value="${esc(a.notes)}" oninput="UI_add('notes',this.value)"></div>
+      <div class="field"><label for="ag">Tags (optional, separate with commas)</label><input id="ag" value="${esc(a.tags)}" placeholder="e.g. email, meetings" oninput="UI_add('tags',this.value)"></div>
+      ${empty ? `<label style="display:flex;gap:8px;align-items:center;font-weight:500;color:var(--ink);margin:0"><input type="checkbox" ${a.fillLater ? 'checked' : ''} onchange="UI_add('fillLater',this.checked)">The ${!a.explanation.trim() ? 'explanation' : 'example'} is empty — mark “Fill later”</label>` : ''}`;
+  }
+  return `<div class="top"><h2>Add a word</h2><button class="btn ghost sm" onclick="A.cancelAdd()">Cancel</button></div>
+  <div class="scroll">${steps}${wordLine}${body}${UI.addErr ? `<div class="err">${esc(UI.addErr)}</div>` : ''}</div>
+  <div class="foot">${a.step > 1 ? `<button class="btn ghost" onclick="A.addBack()">Back</button>` : ''}<span class="spacer"></span>
+   <button class="btn" id="anext" ${a.step === 1 && !a.word.trim() ? 'disabled' : ''} onclick="A.addNext()">${a.step === 4 ? 'Save' : 'Next'}</button></div>`;
 };
 A.rerender = () => render();
 A.cancelAdd = () => { if (UI.add?.from === 'ext') { try { window.close(); } catch {} } go(UI.addReturn || 'home'); };
 A.saveAdd = async () => {
   const a = UI.add; UI.addErr = null;
   const word = a.word.trim().replace(/\s+/g, ' ');
-  if (!word) { UI.addErr = 'Type a word or phrase.'; return render(); }
+  if (!word) { a.step = 1; UI.addErr = 'Type a word or phrase.'; return render(); }
   const emptyDetails = !a.explanation.trim() || !a.example.trim();
-  if (!a.explanation.trim() && !a.fillLater) { UI.addErr = 'Add an English explanation, or tick “Fill later”.'; return render(); }
-  if (!a.dup) {
-    const d = store.all('card').find(c => canon(c.word) === canon(word) && store.get(c.deckId));
-    if (d) { a.dup = d; return render(); }
-  }
+  if (!a.explanation.trim() && !a.fillLater) { UI.addErr = 'Add an English explanation (step 2), or tick “Fill later”.'; return render(); }
   let deckId = a.deckId;
   if (a.newDeck || !deckId) {
     const name = (a.newDeckName || 'My words').trim() || 'My words';
@@ -637,7 +666,7 @@ A.cardAutofill = async () => {
   if (res.status === 'ok') {
     if (!String(e.explanation || '').trim()) e.explanation = res.meanings[0]?.def || '';
     if (!String(e.example || '').trim()) e.example = res.meanings.find(m => m.example)?.example || sents[0] || '';
-    if (!String(e.ipa || '').trim()) e.ipa = res.ipa;
+    if (!String(e.ipa || '').trim()) e.ipa = res.ipa || await pronunciation(res.word || e.word);
     UI.cardMsg = 'Filled from the dictionary. Check it, then tap Save changes.';
   } else UI.cardMsg = { notfound: 'No dictionary entry found. Type the details yourself.', offline: 'You are offline.', slow: 'Connection is slow. Try again later.' }[res.status] || 'Lookup failed. Try again later.';
   render();
