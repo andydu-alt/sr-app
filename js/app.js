@@ -558,11 +558,11 @@ function importRows() {
   const existing = new Set(store.all('card').filter(c => c.deckId === i.deckId).map(c => canon(c.word)));
   const seen = new Set();
   return rows.map(r => {
-    const word = (r[0] || '').trim(), explanation = (r[1] || '').trim(), example = (r[2] || '').trim();
+    const word = (r[0] || '').trim(), explanation = (r[1] || '').trim(), example = (r[2] || '').trim(), ipa = (r[3] || '').trim();
     let status = 'new';
     if (!word) status = 'empty'; else if (word.length > 60) status = 'long'; else if (existing.has(canon(word))) status = 'exists'; else if (seen.has(canon(word))) status = 'repeat';
     if (word) seen.add(canon(word));
-    return { word, explanation, example, status };
+    return { word, explanation, example, ipa, status };
   });
 }
 V.import = () => {
@@ -570,7 +570,7 @@ V.import = () => {
   const label = { new: ['New', ''], exists: ['Skip: already in deck', 'leech'], repeat: ['Skip: duplicate line', 'leech'], empty: ['Skip: no word', 'leech'], long: ['Skip: word too long', 'leech'] };
   return `<div class="top"><h2>Import cards</h2><button class="btn ghost sm" onclick="A.go(UI_impBack())">Cancel</button></div><div class="scroll">
   <div class="field"><label for="ipf">CSV or text file (optional)</label><input id="ipf" type="file" accept=".csv,.txt,.tsv,text/csv,text/plain" onchange="A.importFile(this.files[0])">${i.file ? `<span class="hint">Loaded ${esc(i.file)}</span>` : ''}</div>
-  <div class="field"><label for="ip">Or paste: one card per line — word, explanation, example</label><textarea id="ip" style="min-height:120px;font-family:ui-monospace,monospace;font-size:13px" placeholder="agenda&#9;a list of things to discuss&#9;Let's stick to the agenda." oninput="UI_imp('text',this.value)">${esc(i.text)}</textarea></div>
+  <div class="field"><label for="ip">Or paste: one card per line — word, explanation, example, pronunciation (optional)</label><textarea id="ip" style="min-height:120px;font-family:ui-monospace,monospace;font-size:13px" placeholder="agenda&#9;a list of things to discuss&#9;Let's stick to the agenda." oninput="UI_imp('text',this.value)">${esc(i.text)}</textarea></div>
   <div><label>Separator</label><div class="chips">${[['\t', 'Tab'], [',', 'Comma'], [';', 'Semicolon']].map(([s, n]) => `<button class="chip ${i.sep === s ? 'on' : ''}" onclick="UI_imp('sep',${JSON.stringify(s).replace(/"/g, '&quot;')});A.rerender()">${n}</button>`).join('')}</div></div>
   <label style="display:flex;gap:8px;align-items:center;font-weight:500;color:var(--ink);margin:0"><input type="checkbox" ${i.header ? 'checked' : ''} onchange="UI_imp('header',this.checked);A.rerender()">First line is a header</label>
   <div class="field"><label for="ipd">Into deck</label><select id="ipd" onchange="UI_imp('deckId',this.value);A.rerender()">${decks.map(d => `<option value="${d.id}" ${d.id === i.deckId ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}<option value="__new" ${i.deckId === '__new' ? 'selected' : ''}>+ New deck</option></select></div>
@@ -595,7 +595,7 @@ A.doImport = async () => {
   const i = UI.imp; const rows = importRows().filter(r => r.status === 'new'); if (!rows.length) return;
   let deckId = i.deckId; const now = Date.now();
   if (deckId === '__new') { const deck = { id: store.rid(), type: 'deck', name: (i.newName || 'Imported words').trim(), createdAt: now, order: now }; await store.put(deck); deckId = deck.id; }
-  const cards = rows.map((r, k) => ({ id: store.rid(), type: 'card', deckId, word: r.word, explanation: r.explanation, example: r.example, ipa: '', notes: '', tags: [],
+  const cards = rows.map((r, k) => ({ id: store.rid(), type: 'card', deckId, word: r.word, explanation: r.explanation, example: r.example, ipa: r.ipa || '', notes: '', tags: [],
     fillLater: !r.explanation || !r.example, createdAt: now + k, order: now + k }));
   for (let k = 0; k < cards.length; k += 500) await store.put(...cards.slice(k, k + 500));
   UI.imp = null; A.openDeck(deckId); toast(`Imported ${cards.length} card${cards.length === 1 ? '' : 's'}.`);
