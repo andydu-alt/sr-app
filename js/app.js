@@ -729,6 +729,7 @@ V.settings = () => {
      return list.length ? `<select id="svoice" style="max-width:170px" onchange="A.setVoice(this.value)">${list.map(v => `<option value="${esc(v.name)}" ${cur && cur.name === v.name ? 'selected' : ''}>${esc(v.name.replace(/^Microsoft /, '').replace(/ - English.*$/, '').replace(/ Online \(Natural\)/, ' (Natural)'))} · ${esc(v.lang)}</option>`).join('')}</select>` : '<span class="small muted">No English voices found</span>'; })()}
    <button class="speak" aria-label="Test voice" onclick="A.speak('Hello! This is how SR App will read your words.')">${ICON.speak}</button></span></div>
   <div class="toggle" style="flex-direction:column;align-items:flex-start"><span>Study modes <span class="small muted">(at least one stays on)</span></span><div class="chips">${Object.keys(MODE_NAME).map(k => `<button class="chip ${st.modes[k] ? 'on' : ''}" onclick="A.toggleMode('${k}')">${MODE_NAME[k]}</button>`).join('')}</div></div>
+  <div class="toggle" style="flex-direction:column;align-items:flex-start"><span>Text size <span class="small muted">(this device)</span></span><div class="seg">${TEXT_SIZES.map(([v, n]) => `<button class="${ls.get('sr-textsize', '100') === v ? 'on' : ''}" onclick="A.setTextSize('${v}')">${n}</button>`).join('')}</div></div>
   <div class="toggle"><span>Theme</span><div class="seg">${[['system', 'System'], ['light', 'Light'], ['dark', 'Dark']].map(([v, n]) => `<button class="${st.theme === v ? 'on' : ''}" onclick="A.setSetting('theme','${v}')">${n}</button>`).join('')}</div></div>
   <div class="toggle"><span>Sync<br><span class="small muted">${{ synced: 'All changes synced', syncing: 'Syncing…', offline: 'Offline — saved on this device', failed: 'Sync failed', login: 'Log in again to sync', unavailable: 'Sync unavailable' }[s.state]}${store.outbox.size ? ` · ${store.outbox.size} waiting` : ''}</span></span><button class="chip" onclick="${s.state === 'login' ? 'A.relogin()' : 'A.syncNow()'}">${s.state === 'login' ? 'Log in' : 'Sync now'}</button></div>
   ${s.message && ['failed', 'unavailable', 'login'].includes(s.state) ? `<div class="err">${esc(s.message)}</div>` : ''}
@@ -748,6 +749,16 @@ A.toggleMode = async k => {
   if (!Object.values(modes).some(Boolean)) { toast('At least one study mode must stay on.'); return; }
   await A.setSetting('modes', modes);
 };
+const TEXT_SIZES = [['90','Small'],['100','Normal'],['115','Large'],['130','Extra large']];
+function applyTextSize() {
+  const z = Number(ls.get('sr-textsize', '100')) / 100;
+  $app.style.zoom = z === 1 ? '' : String(z); $app.style.height = '';
+  // Browsers differ on whether zoom also scales the height; shrink it only if the app now overflows the screen.
+  if (z !== 1 && $app.getBoundingClientRect().bottom > innerHeight + 2) $app.style.height = innerWidth >= 600 ? `calc((100% - 32px) / ${z})` : `calc(100% / ${z})`;
+}
+addEventListener('resize', () => applyTextSize());
+A.setTextSize = v => { ls.set('sr-textsize', v); applyTextSize(); render(); };
+applyTextSize();
 function applyTheme() { const t = settings().theme; if (t === 'system') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', t); }
 V.help = () => `<div class="top"><button class="btn ghost sm" onclick="A.go('settings')" aria-label="Back">‹</button><h2 class="spacer">Add words from other apps</h2></div><div class="scroll">
   <h3 style="margin:0">On PC (Chrome or Edge)</h3>
