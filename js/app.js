@@ -93,8 +93,12 @@ function render() {
   const f = document.activeElement; const fid = f && f.id; let sel = null;
   try { if (fid && f.selectionStart != null) sel = [f.selectionStart, f.selectionEnd]; } catch {}
   const view = V[UI.screen] || V.home;
+  // Keep the scroll position when the same screen re-renders (go() resets it on screen changes).
+  const oldSc = $app.querySelector('.scroll'); const top = oldSc ? oldSc.scrollTop : 0; const winY = scrollY;
   $app.innerHTML = view() + modalHtml() + (UI.toast ? `<div class="toast" role="status">${esc(UI.toast)}</div>` : '');
   translate($app);
+  const newSc = $app.querySelector('.scroll'); if (newSc && top) newSc.scrollTop = top;
+  if (winY) scrollTo(0, winY);
   if (fid) { const el = document.getElementById(fid); if (el) { el.focus({ preventScroll: true }); try { if (sel) el.setSelectionRange(sel[0], sel[1]); } catch {} } }
   const af = $app.querySelector('[data-autofocus]'); if (af && !fid) af.focus();
 }
