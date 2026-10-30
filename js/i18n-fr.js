@@ -124,7 +124,7 @@ export const FR = {
   'SR App · words: Free Dictionary API (Wiktionary, CC BY-SA) and Tatoeba (CC BY 2.0 FR).': 'SR App · mots : Free Dictionary API (Wiktionary, CC BY-SA) et Tatoeba (CC BY 2.0 FR).',
   'At least one study mode must stay on.': 'Au moins un mode de révision doit rester activé.', 'Audio is not available in this browser.': 'L’audio n’est pas disponible dans ce navigateur.',
   'Replace all your data?': 'Remplacer toutes vos données ?', 'Replace my data': 'Remplacer mes données', 'This file is not an SR App backup.': 'Ce fichier n’est pas une sauvegarde SR App.',
-  'Backup file saved.': 'Sauvegarde enregistrée.', 'Backup imported.': 'Sauvegarde importée.', 'UK': 'R.-U.', 'US': 'É.-U.',
+  'Backup file saved.': 'Sauvegarde enregistrée.', 'Backup imported.': 'Sauvegarde importée.', 'UK': 'R.-U.', 'US': 'É.-U.', 'English voice': 'Voix anglaise', 'France': 'France', 'Canada': 'Canada',
 };
 
 // Text with numbers or names in it.

@@ -156,18 +156,19 @@ function voiceScore(v, lang) {
 }
 const englishVoices = lang => voices.map(v => [v, voiceScore(v, lang)]).filter(x => x[1] >= 0).sort((a, b) => b[1] - a[1]).map(x => x[0]);
 function chosenVoice(learn = 'en') {
-  if (learn === 'fr') { const saved = ls.get('sr-voice-fr', ''); return voices.find(v => v.name === saved) || englishVoices('fr-FR')[0] || null; }
+  if (learn === 'fr') { const saved = ls.get('sr-voice-fr', ''); return voices.find(v => v.name === saved) || englishVoices((settings().frAccent === 'CA' ? 'fr-CA' : 'fr-FR'))[0] || null; }
   const lang = settings().accent === 'US' ? 'en-US' : 'en-GB';
   const saved = ls.get('sr-voice', '');
   return voices.find(v => v.name === saved) || englishVoices(lang)[0] || null;
 }
 window.ls_clearVoice = () => ls.set('sr-voice', '');
+window.ls_clearVoiceFr = () => ls.set('sr-voice-fr', '');
 try { speechSynthesis.addEventListener('voiceschanged', () => { if (UI.screen === 'settings') render(); }); } catch {}
 A.setVoice = name => { ls.set('sr-voice', name); A.speak('Hello! This is how SR App will read your words.'); render(); };
 A.setVoiceFr = name => { ls.set('sr-voice-fr', name); A.speak('Bonjour ! Voici comment SR App lira vos mots.', 'fr'); render(); };
 A.speak = (text, learn = 'en') => {
   try {
-    const lang = learn === 'fr' ? 'fr-FR' : settings().accent === 'US' ? 'en-US' : 'en-GB';
+    const lang = learn === 'fr' ? (settings().frAccent === 'CA' ? 'fr-CA' : 'fr-FR') : settings().accent === 'US' ? 'en-US' : 'en-GB';
     const u = new SpeechSynthesisUtterance(text); u.lang = lang; u.rate = 0.95;
     const v = chosenVoice(learn);
     if (v) { u.voice = v; u.lang = v.lang; }
@@ -742,13 +743,16 @@ V.settings = () => {
   <div class="toggle"><span><label for="snp" style="margin:0;color:var(--ink);font-size:14px;font-weight:400">New cards per day</label></span><input id="snp" type="number" inputmode="numeric" min="0" max="200" value="${st.newPerDay}" style="width:90px" onchange="A.setSetting('newPerDay',this.value,0,200)"></div>
   <div class="toggle"><span><label for="srp" style="margin:0;color:var(--ink);font-size:14px;font-weight:400">Reviews per day</label><span class="small muted">Most overdue first when there are more</span></span><input id="srp" type="number" inputmode="numeric" min="10" max="9999" value="${st.reviewsPerDay}" style="width:90px" onchange="A.setSetting('reviewsPerDay',this.value,10,9999)"></div>
   <div class="toggle"><span>Retention target<br><span class="small muted">Higher = more reviews</span></span><span style="display:flex;gap:8px;align-items:center"><input type="range" min="80" max="95" value="${st.retention}" aria-label="Retention target" oninput="this.nextElementSibling.textContent=this.value+'%'" onchange="A.setSetting('retention',this.value,80,95)" style="width:110px"><b>${st.retention}%</b></span></div>
+  <div class="toggle" style="border:0;padding-bottom:0"><b>English voice</b></div>
   <div class="toggle"><span>Voice accent</span><div class="seg">${['UK', 'US'].map(a => `<button class="${st.accent === a ? 'on' : ''}" onclick="ls_clearVoice();A.setSetting('accent','${a}')">${a}</button>`).join('')}</div></div>
   <div class="toggle"><span><label for="svoice" style="margin:0;color:var(--ink);font-size:14px;font-weight:400">Voice on this device</label><span class="small muted">Pick the one that sounds best</span></span>
    <span style="display:flex;gap:6px;align-items:center;min-width:0">${(() => { const list = englishVoices(st.accent === 'US' ? 'en-US' : 'en-GB'); const cur = chosenVoice();
      return list.length ? `<select id="svoice" style="max-width:170px" onchange="A.setVoice(this.value)" data-notr>${list.map(v => `<option value="${esc(v.name)}" ${cur && cur.name === v.name ? 'selected' : ''}>${esc(v.name.replace(/^Microsoft /, '').replace(/ - English.*$/, '').replace(/ Online \(Natural\)/, ' (Natural)'))} · ${esc(v.lang)}</option>`).join('')}</select>` : '<span class="small muted">No English voices found</span>'; })()}
    <button class="speak" aria-label="Test voice" onclick="A.speak('Hello! This is how SR App will read your words.')">${ICON.speak}</button></span></div>
-  ${model().decks.some(d => d.lang === 'fr') ? `<div class="toggle"><span><label for="svoicefr" style="margin:0;color:var(--ink);font-size:14px;font-weight:400">French voice</label><span class="small muted">Used for French decks</span></span>
-   <span style="display:flex;gap:6px;align-items:center;min-width:0">${(() => { const list = englishVoices('fr-FR'); const cur = chosenVoice('fr');
+  <div class="toggle" style="border:0;padding-bottom:0"><span><b>French voice</b> <span class="small muted">Used for French decks</span></span></div>
+  <div class="toggle"><span>Voice accent</span><div class="seg">${[['FR', 'France'], ['CA', 'Canada']].map(([v, n]) => `<button class="${(st.frAccent || 'FR') === v ? 'on' : ''}" onclick="ls_clearVoiceFr();A.setSetting('frAccent','${v}')">${n}</button>`).join('')}</div></div>
+  ${true ? `<div class="toggle"><span><label for="svoicefr" style="margin:0;color:var(--ink);font-size:14px;font-weight:400">Voice on this device</label><span class="small muted">Pick the one that sounds best</span></span>
+   <span style="display:flex;gap:6px;align-items:center;min-width:0">${(() => { const list = englishVoices(st.frAccent === 'CA' ? 'fr-CA' : 'fr-FR'); const cur = chosenVoice('fr');
      return list.length ? `<select id="svoicefr" style="max-width:170px" onchange="A.setVoiceFr(this.value)" data-notr>${list.map(v => `<option value="${esc(v.name)}" ${cur && cur.name === v.name ? 'selected' : ''}>${esc(v.name.replace(/^Microsoft /, '').replace(/ - French.*$/, '').replace(/ Online \(Natural\)/, ' (Natural)'))} · ${esc(v.lang)}</option>`).join('')}</select>` : '<span class="small muted">No French voices found</span>'; })()}
    <button class="speak" aria-label="Test voice" onclick="A.speak('Bonjour ! Voici comment SR App lira vos mots.', 'fr')">${ICON.speak}</button></span></div>` : ''}
   <div class="toggle" style="flex-direction:column;align-items:flex-start"><span>Study modes <span class="small muted">(at least one stays on)</span></span><div class="chips">${Object.keys(MODE_NAME).map(k => `<button class="chip ${st.modes[k] ? 'on' : ''}" onclick="A.toggleMode('${k}')">${MODE_NAME[k]}</button>`).join('')}</div></div>
