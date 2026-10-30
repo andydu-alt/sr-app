@@ -317,7 +317,18 @@ function nextCard() {
   s.mcOptions = (s.mode === 'mc' || s.mode === 'learn') ? mcOptions(it) : null;
   if (s.mode === 'learn' && !s.mcOptions) s.learnFallback = true; else s.learnFallback = false;
 }
+// Multiple choice shows one meaning: a random line of a numbered list, without its "(verb)" label.
+function mcText(expl) {
+  const lines = String(expl || '').split('\n').map(l => l.replace(/^\d+\.\s*/, '').trim()).filter(Boolean);
+  return (lines[Math.floor(Math.random() * lines.length)] || '').replace(/^\([a-z ]+\)\s*/i, '');
+}
 function mcOptions(it) {
+  const s = UI.session; const r = mcOptionsRaw(it);
+  if (!r) return null;
+  const opts = r.map(mcText); s.mcCorrect = opts[r.indexOf(it.card.explanation)];
+  return opts;
+}
+function mcOptionsRaw(it) {
   const m = model(); const c = it.card;
   const pool = m.items.filter(x => x.card.id !== c.id && canon(x.card.word) !== canon(c.word) && x.card.explanation && !similar(x.card.explanation, c.explanation));
   if (pool.length < 3) return null;
@@ -330,7 +341,7 @@ function mcOptions(it) {
 }
 function chooseMode(it) {
   const st = model().st; const c = it.card;
-  const ok = { flashcard: true, reverse: !!c.explanation, typing: !!c.explanation, mc: !!c.explanation && !!mcOptions(it), cloze: containsWord(c.example, c.word) };
+  const ok = { flashcard: true, reverse: !!c.explanation, typing: !!c.explanation, mc: !!c.explanation && !!mcOptionsRaw(it), cloze: containsWord(c.example, c.word) };
   const enabled = Object.keys(st.modes).filter(k => st.modes[k] && ok[k]);
   return enabled.length ? enabled[Math.floor(Math.random() * enabled.length)] : 'flashcard';
 }
@@ -378,7 +389,7 @@ window.UI_typed = v => { if (UI.session) UI.session.typed = v; };
 function mcHtml(c, title) {
   const s = UI.session;
   return `<div class="mode">${title}</div><div class="w">${esc(c.word)}</div><div class="opts">${(s.mcOptions || []).map((o, i) =>
-    `<button class="opt ${s.answered ? (o === c.explanation ? 'right' : (s.answered === o ? 'wrong' : '')) : ''}" onclick="A.pickMC(${i})">${esc(o)}</button>`).join('')}</div>`;
+    `<button class="opt ${s.answered ? (o === s.mcCorrect ? 'right' : (s.answered === o ? 'wrong' : '')) : ''}" onclick="A.pickMC(${i})">${esc(o)}</button>`).join('')}</div>`;
 }
 function rateRow(it) {
   const s = UI.session; const iv = previewIntervals(model().f, it.fc);
@@ -387,7 +398,7 @@ function rateRow(it) {
 }
 A.reveal = () => { UI.session.revealed = true; render(); };
 A.learnCheck = () => { UI.session.learnStage = 1; render(); };
-A.pickMC = i => { const s = UI.session; if (s.answered) return; const c = model().byId.get(s.current).card; s.answered = s.mcOptions[i]; s.pre = s.answered === c.explanation ? 'good' : 'again'; render(); };
+A.pickMC = i => { const s = UI.session; if (s.answered) return; const c = model().byId.get(s.current).card; s.answered = s.mcOptions[i]; s.pre = s.answered === s.mcCorrect ? 'good' : 'again'; render(); };
 A.checkTyped = () => { const s = UI.session; const v = document.getElementById('ty')?.value ?? s.typed; s.typed = v; s.pre = gradeTyped(v, model().byId.get(s.current).card.word); s.answered = true; render(); };
 A.rate = async name => {
   const s = UI.session; const id = s.current; if (!id) return;

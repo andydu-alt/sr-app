@@ -31,7 +31,7 @@ function parseEntries(entries) {
 }
 
 const WIKT = 'https://en.wiktionary.org/api/rest_v1/page/definition/';
-const stripHtml = h => String(h || '').replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/\s+/g, ' ').trim();
+const stripHtml = h => String(h || '').replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/\s+/g, ' ').trim();
 function parseWiktionary(data) {
   const meanings = [];
   for (const e of (data && data.en) || []) for (const d of e.definitions || []) {
