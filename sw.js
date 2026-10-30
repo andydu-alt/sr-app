@@ -1,7 +1,7 @@
 // Offline support: app files cached on install; pages network-first, other app files cache-first.
-const CACHE = 'sr-app-v13';
+const CACHE = 'sr-app-v14';
 const FILES = ['./', 'index.html', 'app.css', 'manifest.json', 'icon-192.png', 'icon-512.png',
-  'js/app.js', 'js/store.js', 'js/auth.js', 'js/sync.js', 'js/sched.js', 'js/text.js', 'js/lookup.js', 'js/merge.js', 'js/starter.js', 'js/config.js', 'vendor/ts-fsrs.mjs'];
+  'js/app.js', 'js/store.js', 'js/auth.js', 'js/sync.js', 'js/sched.js', 'js/text.js', 'js/lookup.js', 'js/merge.js', 'js/starter.js', 'js/config.js', 'js/i18n.js', 'js/i18n-fr.js', 'vendor/ts-fsrs.mjs'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener('fetch', e => {

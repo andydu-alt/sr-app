@@ -5,7 +5,7 @@ export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;'
 // Lowercase, hyphen = space, drop punctuation, collapse spaces.
 export function norm(s) {
   return String(s ?? '').toLowerCase().replace(/[‐-―-]/g, ' ').replace(/[’']/g, "'")
-    .replace(/[^a-z' ]/g, '').replace(/'/g, '').replace(/\s+/g, ' ').trim();
+    .replace(/[^\p{L}' ]/gu, '').replace(/'/g, '').replace(/\s+/g, ' ').trim();
 }
 
 // Map UK and US spellings to one form, applied to both sides of a comparison.
@@ -59,7 +59,7 @@ export function diff(typed, answer) {
 const reEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 export function wordRegex(word) {
   const parts = String(word).trim().split(/[\s-]+/).map(reEsc);
-  return new RegExp('(^|[^A-Za-z])(' + parts.join('[\\s-]+') + ')(?![A-Za-z])', 'i');
+  return new RegExp('(^|[^\\p{L}])(' + parts.join('[\\s-]+') + ')(?![\\p{L}])', 'iu');
 }
 export const containsWord = (sentence, word) => !!word && wordRegex(word).test(sentence || '');
 // Returns [before, match, after] or null.
@@ -73,10 +73,10 @@ export function clozeSplit(sentence, word) {
 // Clean a highlighted selection: trim punctuation, lower a sentence-start capital, max 60 chars.
 export function cleanSelection(raw, sentence = '') {
   let s = String(raw || '').replace(/\s+/g, ' ').trim();
-  s = s.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, '');
+  s = s.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
   let cut = false;
   if (s.length > 60) { s = s.slice(0, 60).replace(/\s+\S*$/, ''); cut = true; }
-  if (/^[A-Z][a-z]/.test(s)) {
+  if (/^\p{Lu}\p{Ll}/u.test(s)) {
     const at = sentence ? sentence.indexOf(s) : 0;
     const before = sentence ? sentence.slice(0, Math.max(at, 0)).trim() : '';
     const sentenceStart = at <= 0 || /[.!?]$/.test(before) || before === '';

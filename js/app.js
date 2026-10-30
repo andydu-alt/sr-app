@@ -4,9 +4,11 @@ import * as auth from './auth.js';
 import * as sync from './sync.js';
 import { makeScheduler, replay, cardInfo, previewIntervals, buildQueue, pickNext, progress, dayStart, nextDayStart, fmtInterval, LEECH_LAPSES, RATING_NAME } from './sched.js';
 import { esc, norm, canon, gradeTyped, diff, containsWord, clozeSplit, cleanSelection, similar, parseDelimited } from './text.js';
-import { lookupWord, exampleSentences, pronunciation } from './lookup.js';
+import { lookupWordIn, exampleSentencesIn, pronunciationIn } from './lookup.js';
 import { STARTER } from './starter.js';
 import { IS_NETLIFY_COPY, MAIN_APP_URL } from './config.js';
+import { translate, uiLang, setUiLang, missing } from './i18n.js';
+window.__i18nMissing = missing;
 
 const $app = document.getElementById('app');
 const A = {}; window.A = A;
@@ -59,7 +61,9 @@ function model() {
 const deckName = id => (store.get(id) || {}).name || 'Deck';
 function queueFor(deckId = null, extraNew = 0) {
   const m = model();
-  return buildQueue(m.items, { newLimit: m.st.newPerDay, reviewLimit: m.st.reviewsPerDay, newDoneToday: m.newDoneToday, reviewsDoneToday: m.reviewsDoneToday, deckId, extraNew });
+  // "Study all" only uses decks that are switched on; a single deck can always be studied directly.
+  const items = deckId ? m.items : m.items.filter(x => !(store.get(x.card.deckId) || {}).off);
+  return buildQueue(items, { newLimit: m.st.newPerDay, reviewLimit: m.st.reviewsPerDay, newDoneToday: m.newDoneToday, reviewsDoneToday: m.reviewsDoneToday, deckId, extraNew });
 }
 function deckStats(deckId) {
   const m = model(); const q = queueFor(deckId);
@@ -90,6 +94,7 @@ function render() {
   try { if (fid && f.selectionStart != null) sel = [f.selectionStart, f.selectionEnd]; } catch {}
   const view = V[UI.screen] || V.home;
   $app.innerHTML = view() + modalHtml() + (UI.toast ? `<div class="toast" role="status">${esc(UI.toast)}</div>` : '');
+  translate($app);
   if (fid) { const el = document.getElementById(fid); if (el) { el.focus({ preventScroll: true }); try { if (sel) el.setSelectionRange(sel[0], sel[1]); } catch {} } }
   const af = $app.querySelector('[data-autofocus]'); if (af && !fid) af.focus();
 }
@@ -97,7 +102,7 @@ let toastTimer;
 function toast(t) { UI.toast = t; render(); clearTimeout(toastTimer); toastTimer = setTimeout(() => { UI.toast = null; render(); }, 2600); }
 function modal(m) { UI.modal = m; render(); }
 A.closeModal = () => { UI.modal = null; render(); };
-A.modalOk = async () => { const m = UI.modal; if (!m) return; const val = document.getElementById('modalin')?.value; UI.modal = null; await m.onOk(val); };
+A.modalOk = async () => { const m = UI.modal; if (!m) return; const val = document.getElementById('modalin')?.value; const lang = document.getElementById('modallang')?.value; UI.modal = null; UI.modalLang = lang; await m.onOk(val); };
 A.modalAlt = async () => { const m = UI.modal; UI.modal = null; if (m && m.onAlt) await m.onAlt(); else render(); };
 function modalHtml() {
   const m = UI.modal; if (!m) return '';
@@ -127,7 +132,8 @@ A.syncInfo = () => {
       + (pending ? ` ${pending} change${pending > 1 ? 's' : ''} waiting to sync.` : ''),
     ok: 'Sync now', alt: 'Close', onOk: () => sync.syncNow() });
 };
-const speakBtn = text => `<button class="speak" aria-label="Play pronunciation" onclick="A.speak(this.dataset.say)" data-say="${esc(text)}">${ICON.speak}</button>`;
+const speakBtn = (text, lang = 'en') => `<button class="speak" aria-label="Play pronunciation" onclick="A.speak(this.dataset.say, this.dataset.lang)" data-say="${esc(text)}" data-lang="${lang}">${ICON.speak}</button>`;
+const deckLang = deckId => (store.get(deckId) || {}).lang || 'en';
 const greeting = () => { const h = new Date().getHours(); return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'; };
 const userName = () => (auth.current()?.user?.name || '').split(' ')[0];
 
@@ -138,17 +144,19 @@ try { loadVoices(); speechSynthesis.onvoiceschanged = loadVoices; } catch {}
 // Best-sounding voices first: natural/neural/enhanced voices beat the old robotic ones.
 function voiceScore(v, lang) {
   const n = v.name.toLowerCase(); let s = 0;
-  if (v.lang.replace('_', '-').toLowerCase() === lang.toLowerCase()) s += 100; else if (/^en/i.test(v.lang)) s += 10; else return -1;
+  const base = lang.slice(0, 2).toLowerCase();
+  if (v.lang.replace('_', '-').toLowerCase() === lang.toLowerCase()) s += 100; else if (v.lang.toLowerCase().startsWith(base)) s += 10; else return -1;
   if (/natural|neural|online/.test(n)) s += 50;
   if (/enhanced|premium|siri/.test(n)) s += 45;
   if (/^google/.test(n)) s += 30;
-  if (/sonia|libby|ryan|maisie|thomas|daniel|kate|serena|arthur|martha|aria|jenny|guy|samantha|ava|zoe|evan/.test(n)) s += 15;
+  if (/sonia|libby|ryan|maisie|thomas|daniel|kate|serena|arthur|martha|aria|jenny|guy|samantha|ava|zoe|evan|denise|henri|eloise|vivienne|remy|amelie|audrey|aurelie/.test(n)) s += 15;
   if (/compact|espeak|novelty|zarvox|whisper|bad news|bells|boing|bubbles|cellos|jester|organ|superstar|trinoids|wobble|albert|fred|junior|ralph|grandma|grandpa|eddy|flo|reed|rocko|sandy|shelley/.test(n)) s -= 80;
   if (v.localService === false) s += 5;
   return s;
 }
 const englishVoices = lang => voices.map(v => [v, voiceScore(v, lang)]).filter(x => x[1] >= 0).sort((a, b) => b[1] - a[1]).map(x => x[0]);
-function chosenVoice() {
+function chosenVoice(learn = 'en') {
+  if (learn === 'fr') { const saved = ls.get('sr-voice-fr', ''); return voices.find(v => v.name === saved) || englishVoices('fr-FR')[0] || null; }
   const lang = settings().accent === 'US' ? 'en-US' : 'en-GB';
   const saved = ls.get('sr-voice', '');
   return voices.find(v => v.name === saved) || englishVoices(lang)[0] || null;
@@ -156,11 +164,12 @@ function chosenVoice() {
 window.ls_clearVoice = () => ls.set('sr-voice', '');
 try { speechSynthesis.addEventListener('voiceschanged', () => { if (UI.screen === 'settings') render(); }); } catch {}
 A.setVoice = name => { ls.set('sr-voice', name); A.speak('Hello! This is how SR App will read your words.'); render(); };
-A.speak = text => {
+A.setVoiceFr = name => { ls.set('sr-voice-fr', name); A.speak('Bonjour ! Voici comment SR App lira vos mots.', 'fr'); render(); };
+A.speak = (text, learn = 'en') => {
   try {
-    const lang = settings().accent === 'US' ? 'en-US' : 'en-GB';
+    const lang = learn === 'fr' ? 'fr-FR' : settings().accent === 'US' ? 'en-US' : 'en-GB';
     const u = new SpeechSynthesisUtterance(text); u.lang = lang; u.rate = 0.95;
-    const v = chosenVoice();
+    const v = chosenVoice(learn);
     if (v) { u.voice = v; u.lang = v.lang; }
     speechSynthesis.cancel(); speechSynthesis.speak(u);
   } catch { toast('Audio is not available in this browser.'); }
@@ -277,11 +286,13 @@ V.home = () => {
   <div class="stat-row"><div class="stat"><b>${due}</b><span>reviews due</span></div><div class="stat"><b>${nw}</b><span>new today</span></div><div class="stat"><b>${p.streak}</b><span>day streak</span></div></div>
   ${due + nw ? `<button class="btn" onclick="A.study(null)">Study all decks · about ${mins} min</button>${q.reviewsCapped ? `<p class="small muted">${q.reviewsCapped} more reviews are waiting beyond your daily limit of ${m.st.reviewsPerDay}.</p>` : ''}`
     : `<div class="empty" style="padding:8px 0"><h3 style="margin:0">Nothing due right now</h3><p class="muted">${nextDue ? 'Next review ' + whenText(nextDue) + '.' : 'Add words to start learning.'}</p>${anyNew ? `<button class="btn ghost" onclick="A.study(null,5)">Learn 5 extra new words</button>` : ''}</div>`}
-  ${m.decks.map(d => { const s = deckStats(d.id); return `<div class="deck"><button class="main" onclick="${s.due + s.newCount ? `A.study('${d.id}')` : `A.openDeck('${d.id}')`}"><h3>${esc(d.name)}</h3>
-    <span class="counts">${s.total ? `<span><span class="due">${s.due}</span> due</span><span><span class="new">${s.newCount}</span> new</span><span class="muted">${s.mastery}% mastered</span>` : `<span class="muted">No cards yet · tap to add</span>`}</span>
-    <span class="bar"><i style="width:${s.mastery}%"></i></span></button><button class="icon" aria-label="Manage ${esc(d.name)}" onclick="A.openDeck('${d.id}')">⋯</button></div>`; }).join('')}
+  ${m.decks.map(d => { const s = deckStats(d.id); return `<div class="deck ${d.off ? 'is-off' : ''}"><button class="main" onclick="${s.due + s.newCount ? `A.study('${d.id}')` : `A.openDeck('${d.id}')`}"><h3><span data-notr>${esc(d.name)}</span>${d.lang === 'fr' ? ' <span class="tag">FR</span>' : ''}</h3>
+    <span class="counts">${d.off ? `<span class="muted">Off · not included in Study all</span>` : s.total ? `<span><span class="due">${s.due}</span> due</span><span><span class="new">${s.newCount}</span> new</span><span class="muted">${s.mastery}% mastered</span>` : `<span class="muted">No cards yet · tap to add</span>`}</span>
+    <span class="bar"><i style="width:${s.mastery}%"></i></span></button>${switchHtml(d)}<button class="icon" aria-label="Manage ${esc(d.name)}" onclick="A.openDeck('${d.id}')">⋯</button></div>`; }).join('')}
   </div>${tabs()}`;
 };
+function switchHtml(d) { return `<button class="switch ${d.off ? '' : 'on'}" role="switch" aria-checked="${!d.off}" aria-label="Include ${esc(d.name)} in Study all" onclick="A.toggleDeck('${d.id}')"><i></i></button>`; }
+A.toggleDeck = async id => { const d = store.get(id); if (!d) return; await store.put({ ...d, off: !d.off }); render(); toast(d.off ? `${d.name} is on.` : `${d.name} is off. It won't appear in Study all.`); };
 function whenText(t) { const ms = t - Date.now(); if (ms <= 0) return 'now'; if (ms < 3600000) return 'in ' + Math.ceil(ms / 60000) + ' min'; if (t < nextDayStart()) return 'in ' + Math.max(1, Math.round(ms / 3600000)) + ' h';
   const d = Math.max(1, Math.round(ms / 86400000)); if (d < 60) return `in ${d} day${d === 1 ? '' : 's'}`; const mo = Math.round(d / 30.4); return `in ${mo} months`; }
 A.quickAdd = () => { const v = document.getElementById('qa').value; if (v.trim()) A.openAdd({ word: v }); };
@@ -334,7 +345,7 @@ V.study = () => {
   const reveal = `<button class="btn" onclick="A.reveal()">Show answer <span class="small">(Space)</span></button>`;
   const ex = c.example ? `<div class="ex">“${esc(c.example)}”</div>` : '';
   const ipa = c.ipa ? `<div class="ipa">${esc(c.ipa)}</div>` : '';
-  const say = speakBtn(c.word + (c.example ? '. ' + c.example : ''));
+  const say = speakBtn(c.word + (c.example ? '. ' + c.example : ''), deckLang(c.deckId));
   if (s.mode === 'learn') {
     if (s.learnStage === 0) { body = `<div class="mode">New word · Learn</div><div class="w">${esc(c.word)}</div>${ipa}${say}<div>${esc(c.explanation || '')}</div>${ex}`; actions = `<button class="btn" data-autofocus onclick="A.learnCheck()">Got it, check me</button>`; }
     else if (s.learnFallback) { body = `<div class="mode">Quick check · recall the meaning</div><div class="w">${esc(c.word)}</div>` + (s.revealed ? `<div>${esc(c.explanation || '')}</div>${ex}` : ''); actions = s.revealed ? rateRow(it) : reveal; }
@@ -360,7 +371,7 @@ V.study = () => {
     actions = s.revealed ? rateRow(it) : reveal;
   }
   return `<div class="top"><button class="btn ghost sm" onclick="A.endStudy()">✕ Close</button>${syncPill()}<button class="btn ghost sm" ${s.undo.length ? '' : 'disabled'} onclick="A.undo()">↶ Undo</button></div>
-  <div class="scroll">${studyLeft()}<div class="card"><div class="inner">${body}</div></div>${actions}</div>`;
+  <div class="scroll">${studyLeft()}<div class="card" data-notr-content><div class="inner">${body}</div></div>${actions}</div>`;
 };
 window.UI_typed = v => { if (UI.session) UI.session.typed = v; };
 function mcHtml(c, title) {
@@ -424,7 +435,7 @@ A.openAdd = (p = {}) => {
   const last = ls.get('sr-lastDeck', ''); const deckId = p.deckId || (decks.find(d => d.id === last) ? last : decks[0]?.id) || '';
   const { word, cut } = cleanSelection(p.word || '', p.sentence || '');
   const sentence = (p.sentence || '').trim();
-  UI.add = { step: word ? 2 : 1, word, cut, sentence, deckId, explanation: '', example: sentence, ipa: '', notes: '', tags: '', fillLater: true,
+  UI.add = { step: word ? 2 : 1, word, cut, sentence, deckId, lang: deckId ? deckLang(deckId) : 'en', explanation: '', example: sentence, ipa: '', notes: '', tags: '', fillLater: true,
     lookup: null, examplesLoading: false, ipaLoading: false, mSel: [], examples: [], exSel: [], dup: null, from: p.from || '', newDeck: !decks.length, lookedUp: '' };
   UI.addErr = null;
   UI.addReturn = UI.screen === 'add' ? UI.addReturn : (['home', 'deck', 'decks'].includes(UI.screen) ? UI.screen : 'home');
@@ -443,7 +454,7 @@ function startLookup() {
   if (a.sentence) a.exSel = [0];
   render();
   const still = () => UI.screen === 'add' && UI.add === a && a.lookedUp === w;
-  lookupWord(w).then(async res => {
+  lookupWordIn(w, a.lang).then(async res => {
     if (!still()) return;
     a.lookup = res;
     if (res.status === 'ok') {
@@ -454,10 +465,10 @@ function startLookup() {
     }
     if (!a.exSel.length && a.examples.length && !a.example) { a.exSel = [0]; a.example = a.examples[0].text; }
     render();
-    if (!a.ipa) { const ipa = await pronunciation(res.word || w); if (still() && !a.ipa) a.ipa = ipa; }
+    if (!a.ipa) { const ipa = await pronunciationIn(res.word || w, a.lang); if (still() && !a.ipa) a.ipa = ipa; }
     if (still()) { a.ipaLoading = false; render(); }
   });
-  exampleSentences(w).then(list => {
+  exampleSentencesIn(w, 4, a.lang).then(list => {
     if (!still()) return;
     for (const t of list) if (a.examples.length < 6 && !a.examples.some(e => e.text === t)) a.examples.push({ text: t, src: 'Tatoeba sentence library' });
     if (!a.exSel.length && a.examples.length && !a.example) { a.exSel = [0]; a.example = a.examples[0].text; }
@@ -477,6 +488,10 @@ A.addNext = () => {
   if (a.step < 4) { a.step++; render(); const sc = $app.querySelector('.scroll'); if (sc) sc.scrollTop = 0; return; }
   A.saveAdd();
 };
+// Switching language moves the target deck to one in that language (or a new deck).
+A.setAddLang = lang => { const a = UI.add; a.lang = lang; const ds = model().decks.filter(d => (d.lang || 'en') === lang);
+  if (!ds.some(d => d.id === a.deckId)) { a.deckId = ds[0]?.id || ''; a.newDeck = !ds.length; if (!ds.length) a.newDeckName = lang === 'fr' ? 'Mots français' : 'My words'; }
+  a.lookedUp = ''; render(); };
 A.addBack = () => { const a = UI.add; UI.addErr = null; if (a.step > 1) { a.step--; render(); } };
 A.useBase = () => { const a = UI.add; a.word = a.baseOffer; a.baseOffer = null; startLookup(); };
 A.typeMyself = () => { const a = UI.add; if (a.lookup?.status === 'loading') a.lookup = { status: 'skipped', word: a.lookedUp }; render(); document.getElementById('ae')?.focus(); };
@@ -489,13 +504,14 @@ A.pickExample = i => { const a = UI.add; a.exSel = toggleIn(a.exSel, i); a.examp
 A.retryLookup = () => startLookup();
 const spinner = text => `<div class="loading"><span class="spinner" aria-hidden="true"></span><span>${esc(text)}</span></div>`;
 V.add = () => {
-  const a = UI.add; const decks = model().decks; const L = a.lookup || {}; const st = L.status;
+  const a = UI.add; const decks = model().decks.filter(d => (d.lang || 'en') === a.lang); const L = a.lookup || {}; const st = L.status;
   const names = ['Word', 'Meaning', 'Example', 'Details'];
   const steps = `<div class="steps" aria-label="Step ${a.step} of 4">${names.map((n, i) => `<span class="${i + 1 === a.step ? 'on' : i + 1 < a.step ? 'done' : ''}">${i + 1}. ${n}</span>`).join('')}</div>`;
-  const wordLine = a.step > 1 ? `<div class="wordline"><span class="w">${esc(a.word)}</span>${a.ipa ? `<span class="muted">${esc(a.ipa)}</span>` : ''}</div>` : '';
+  const wordLine = a.step > 1 ? `<div class="wordline" data-notr><span class="w">${esc(a.word)}</span>${a.ipa ? `<span class="muted">${esc(a.ipa)}</span>` : ''}</div>` : '';
   let body = '';
   if (a.step === 1) {
-    body = `<div class="field"><label for="aw">Word or phrase</label><input id="aw" value="${esc(a.word)}" maxlength="60" autocapitalize="none" autocomplete="off" data-autofocus
+    body = `<div class="toggle" style="border:0;padding:0"><span>Language</span><div class="seg">${[['en', 'English'], ['fr', 'French']].map(([v, n]) => `<button class="${a.lang === v ? 'on' : ''}" onclick="A.setAddLang('${v}')">${n}</button>`).join('')}</div></div>
+      <div class="field"><label for="aw">Word or phrase</label><input id="aw" value="${esc(a.word)}" maxlength="60" autocapitalize="none" autocomplete="off" data-autofocus
       oninput="UI_add('word',this.value);document.getElementById('anext').disabled=!this.value.trim()" onkeydown="if(event.key==='Enter'){event.preventDefault();A.addNext()}">
       ${a.cut ? '<span class="hint">The highlighted text was long, so it was shortened to 60 characters.</span>' : '<span class="hint">Then tap Next to look it up.</span>'}</div>`;
   } else if (a.step === 2) {
@@ -504,13 +520,13 @@ V.add = () => {
     else if (st === 'offline') list = `<div class="warn"><b>Offline.</b> Type the explanation yourself. The card saves now and syncs later.</div>`;
     else if (st === 'slow' || st === 'error') list = `<div class="warn"><b>Connection is slow.</b> Type the explanation yourself, or <button class="link" onclick="A.retryLookup()">try again</button>.</div>`;
     else if (st === 'notfound') list = `<div class="warn"><b>No dictionary entry for “${esc(L.word)}”.</b> Phrases and idioms are often missing. Type the explanation yourself.</div>`;
-    else if (st === 'ok') list = `<div><div class="listhead"><label>Dictionary meanings (tick one or more)</label>${L.meanings.length > 1 ? `<button class="link" onclick="A.allMeanings()">${a.mSel.length === L.meanings.length ? 'Clear all' : 'Select all'}</button>` : ''}</div><div class="opts">${L.meanings.map((m, i) => `<button class="meaning check ${a.mSel.includes(i) ? 'on' : ''}" role="checkbox" aria-checked="${a.mSel.includes(i)}" onclick="A.pickMeaning(${i})"><span class="box">${a.mSel.includes(i) ? '✓' : ''}</span><span>${esc(meaningText(m))}</span></button>`).join('')}</div></div>`;
+    else if (st === 'ok') list = `<div><div class="listhead"><label>Dictionary meanings (tick one or more)</label>${L.meanings.length > 1 ? `<button class="link" onclick="A.allMeanings()">${a.mSel.length === L.meanings.length ? 'Clear all' : 'Select all'}</button>` : ''}</div><div class="opts">${L.meanings.map((m, i) => `<button class="meaning check ${a.mSel.includes(i) ? 'on' : ''}" role="checkbox" aria-checked="${a.mSel.includes(i)}" onclick="A.pickMeaning(${i})"><span class="box">${a.mSel.includes(i) ? '✓' : ''}</span><span data-notr>${esc(meaningText(m))}</span></button>`).join('')}</div></div>`;
     body = `${a.dup ? `<div class="warn"><b>“${esc(a.dup.word)}”</b> is already in ${esc(deckName(a.dup.deckId))}: <i>“${esc(a.dup.explanation || 'no explanation')}”</i>. You can still add it, for example for a different meaning.</div>` : ''}
       ${a.baseOffer ? `<div class="warn">The dictionary lists this under <b>“${esc(a.baseOffer)}”</b>. <button class="link" onclick="A.useBase()">Use “${esc(a.baseOffer)}” instead</button></div>` : ''}
       ${list}
-      ${st === 'loading' ? '' : `<div class="field"><label for="ae">English explanation</label><textarea id="ae" rows="3" placeholder="A short explanation in English" oninput="UI_add('explanation',this.value)">${esc(a.explanation)}</textarea></div>`}`;
+      ${st === 'loading' ? '' : `<div class="field"><label for="ae">${a.lang === 'fr' ? 'French explanation' : 'English explanation'}</label><textarea id="ae" rows="3" placeholder="${a.lang === 'fr' ? 'A short explanation in French' : 'A short explanation in English'}" oninput="UI_add('explanation',this.value)">${esc(a.explanation)}</textarea></div>`}`;
   } else if (a.step === 3) {
-    body = `${a.examples.length ? `<div><div class="listhead"><label>Suggested examples (tick one or more)</label>${a.examples.length > 1 ? `<button class="link" onclick="A.allExamples()">${a.exSel.length === a.examples.length ? 'Clear all' : 'Select all'}</button>` : ''}</div><div class="opts">${a.examples.map((e, i) => `<button class="meaning check ${a.exSel.includes(i) ? 'on' : ''}" role="checkbox" aria-checked="${a.exSel.includes(i)}" onclick="A.pickExample(${i})"><span class="box">${a.exSel.includes(i) ? '✓' : ''}</span><span>${esc(e.text)}<br><span class="small muted">${esc(e.src)}</span></span></button>`).join('')}</div></div>` : ''}
+    body = `${a.examples.length ? `<div><div class="listhead"><label>Suggested examples (tick one or more)</label>${a.examples.length > 1 ? `<button class="link" onclick="A.allExamples()">${a.exSel.length === a.examples.length ? 'Clear all' : 'Select all'}</button>` : ''}</div><div class="opts">${a.examples.map((e, i) => `<button class="meaning check ${a.exSel.includes(i) ? 'on' : ''}" role="checkbox" aria-checked="${a.exSel.includes(i)}" onclick="A.pickExample(${i})"><span class="box">${a.exSel.includes(i) ? '✓' : ''}</span><span><span data-notr>${esc(e.text)}</span><br><span class="small muted">${esc(e.src)}</span></span></button>`).join('')}</div></div>` : ''}
       ${a.examplesLoading ? spinner('Finding example sentences…') : (!a.examples.length ? `<p class="muted">${navigator.onLine ? 'No example sentences found.' : 'Offline.'} Write your own below.</p>` : '')}
       <div class="field"><label for="ax">Example sentence</label><textarea id="ax" rows="3" placeholder="An example sentence using the word" oninput="UI_add('example',this.value)">${esc(a.example)}</textarea></div>`;
   } else {
@@ -538,7 +554,7 @@ A.saveAdd = async () => {
   let deckId = a.deckId;
   if (a.newDeck || !deckId) {
     const name = (a.newDeckName || 'My words').trim() || 'My words';
-    const now = Date.now(); const deck = { id: store.rid(), type: 'deck', name, createdAt: now, order: now };
+    const now = Date.now(); const deck = { id: store.rid(), type: 'deck', name, lang: a.lang || 'en', createdAt: now, order: now };
     await store.put(deck); deckId = deck.id;
   }
   ls.set('sr-lastDeck', deckId);
@@ -605,13 +621,13 @@ A.doImport = async () => {
 V.decks = () => {
   const m = model();
   return `<div class="top"><h2>Decks</h2>${syncPill()}</div><div class="scroll">
-  ${m.decks.length ? `<div class="list">${m.decks.map(d => { const s = deckStats(d.id); return `<button class="row" onclick="A.openDeck('${d.id}')"><div><b>${esc(d.name)}</b><span class="sub">${s.total} card${s.total === 1 ? '' : 's'} · ${s.mastery}% mastered</span></div><span class="tag">${s.due} due</span></button>`; }).join('')}</div>`
+  ${m.decks.length ? `<div class="list">${m.decks.map(d => { const s = deckStats(d.id); return `<div class="row deckrow ${d.off ? 'is-off' : ''}"><button class="rowmain" onclick="A.openDeck('${d.id}')"><b data-notr>${esc(d.name)}</b><span class="sub">${d.lang === 'fr' ? 'French · ' : ''}${s.total} card${s.total === 1 ? '' : 's'} · ${d.off ? 'off' : `${s.due} due`}</span></button>${switchHtml(d)}</div>`; }).join('')}</div><p class="small muted">Switch a deck off to leave it out of Study all. Its progress is kept.</p>`
     : `<div class="empty"><h3 style="margin:0">No decks yet</h3><p class="muted">Create a deck, or add the starter decks.</p><button class="btn ghost" onclick="A.go('firstrun')">Add starter decks</button></div>`}
   <button class="btn ghost" onclick="A.newDeck()">+ New deck</button>
   <button class="btn ghost" onclick="A.openImport()">Import a list</button></div>${tabs()}`;
 };
-A.newDeck = () => modal({ title: 'New deck', html: `<input id="modalin" placeholder="Deck name, e.g. Kids' school words" maxlength="40" data-autofocus>`, ok: 'Create',
-  onOk: async v => { const name = (v || '').trim(); if (!name) return render(); const now = Date.now(); const d = { id: store.rid(), type: 'deck', name, createdAt: now, order: now }; await store.put(d); A.openDeck(d.id); } });
+A.newDeck = () => modal({ title: 'New deck', html: `<input id="modalin" placeholder="Deck name, e.g. Kids' school words" maxlength="40" data-autofocus><label for="modallang" style="margin-top:4px">Language of the words</label><select id="modallang"><option value="en">English</option><option value="fr">French</option></select>`, ok: 'Create',
+  onOk: async v => { const name = (v || '').trim(); if (!name) return render(); const lang = UI.modalLang || 'en'; const now = Date.now(); const d = { id: store.rid(), type: 'deck', name, lang, createdAt: now, order: now }; await store.put(d); A.openDeck(d.id); } });
 A.openDeck = (deckId, filter = 'All') => { UI.deckId = deckId; UI.filter = filter; UI.search = ''; go('deck'); };
 const FILTERS = ['All', 'New', 'Learning', 'Review', 'Mastered', 'Leeches', 'Suspended', 'Fill later'];
 function matchFilter(x, f) {
@@ -627,15 +643,17 @@ V.deck = () => {
   const rows = cards.filter(x => matchFilter(x, UI.filter)).filter(x => !q || canon(x.card.word + ' ' + x.card.explanation + ' ' + (x.card.example || '') + ' ' + (x.card.tags || []).join(' ')).includes(q))
     .sort((a, b) => a.card.word.localeCompare(b.card.word));
   const s = deck ? deckStats(deck.id) : null;
-  return `<div class="top"><button class="btn ghost sm" onclick="A.go('decks')" aria-label="Back to decks">‹</button><h2 class="spacer">${esc(deck ? deck.name : 'All decks')}</h2><button class="btn ghost sm" onclick="A.openAdd({deckId:'${deck ? deck.id : ''}'})">+ Add</button></div><div class="scroll">
+  return `<div class="top"><button class="btn ghost sm" onclick="A.go('decks')" aria-label="Back to decks">‹</button><h2 class="spacer" ${deck ? 'data-notr' : ''}>${esc(deck ? deck.name : 'All decks')}</h2><button class="btn ghost sm" onclick="A.openAdd({deckId:'${deck ? deck.id : ''}'})">+ Add</button></div><div class="scroll">
   ${!cards.length ? `<div class="empty"><div class="big">Aa</div><h3 style="margin:0">No cards yet</h3><p class="muted">Add words here, highlight them on web pages, or import a list.</p><button class="btn" onclick="A.openAdd({deckId:'${deck ? deck.id : ''}'})">Add a word</button><button class="btn ghost" onclick="A.openImport('${deck ? deck.id : ''}')">Import a list</button></div>` : `
   ${s && s.due + s.newCount ? `<button class="btn" onclick="A.study('${deck.id}')">Study this deck · ${s.due} due, ${s.newCount} new</button>` : ''}
   <input id="srch" placeholder="Search word, explanation, tag" value="${esc(UI.search || '')}" oninput="UI.search=this.value;A.rerender()" aria-label="Search cards">
   <div class="chips">${FILTERS.filter(f => f === 'All' || counts[f]).map(f => `<button class="chip ${UI.filter === f ? 'on' : ''}" onclick="UI_filter('${f}')">${f} ${counts[f]}</button>`).join('')}</div>
   ${rows.length ? `<div class="list">${rows.slice(0, 300).map(x => { const t = x.card.suspended ? ['Suspended', ''] : x.info.lapses >= LEECH_LAPSES ? ['Leech', 'leech'] : x.card.fillLater ? ['Fill later', 'fill'] : x.info.mastered ? ['Mastered', ''] : null;
-      return `<button class="row" onclick="A.openCard('${x.card.id}')"><div><b>${esc(x.card.word)}</b><span class="sub">${esc(cardSub(x))}</span></div>${t ? `<span class="tag ${t[1]}">${t[0]}</span>` : ''}</button>`; }).join('')}</div>${rows.length > 300 ? `<p class="small muted">Showing 300 of ${rows.length}. Search to narrow down.</p>` : ''}`
+      return `<button class="row" onclick="A.openCard('${x.card.id}')"><div><b data-notr>${esc(x.card.word)}</b><span class="sub">${esc(cardSub(x))}</span></div>${t ? `<span class="tag ${t[1]}">${t[0]}</span>` : ''}</button>`; }).join('')}</div>${rows.length > 300 ? `<p class="small muted">Showing 300 of ${rows.length}. Search to narrow down.</p>` : ''}`
     : `<div class="empty"><h3 style="margin:0">No cards match</h3><p class="muted">Try another word, or add it as a new card.</p><button class="btn ghost" onclick="A.openAdd({word:UI.search||'',deckId:'${deck ? deck.id : ''}'})">Add it</button></div>`}`}
-  ${deck ? `<div class="chips"><button class="chip" onclick="A.openImport('${deck.id}')">Import</button><button class="chip" onclick="A.renameDeck('${deck.id}')">Rename deck</button><button class="chip danger" onclick="A.deleteDeck('${deck.id}')">Delete deck</button></div>` : ''}
+  ${deck ? `<div class="toggle"><span>Include in Study all</span>${switchHtml(deck)}</div>
+  <div class="toggle"><span>Language of the words</span><div class="seg">${[['en', 'English'], ['fr', 'French']].map(([v, n]) => `<button class="${(deck.lang || 'en') === v ? 'on' : ''}" onclick="A.setDeckLang('${deck.id}','${v}')">${n}</button>`).join('')}</div></div>
+  <div class="chips"><button class="chip" onclick="A.openImport('${deck.id}')">Import</button><button class="chip" onclick="A.renameDeck('${deck.id}')">Rename deck</button><button class="chip danger" onclick="A.deleteDeck('${deck.id}')">Delete deck</button></div>` : ''}
   </div>${tabs()}`;
 };
 window.UI = new Proxy({}, { get: (_, k) => UI[k], set: (_, k, v) => { UI[k] = v; return true; } });
@@ -647,6 +665,7 @@ function cardSub(x) {
   const when = x.info.due <= Date.now() ? 'due now' : 'next ' + whenText(x.info.due);
   return `${x.info.stateName} · ${when}${x.info.lapses >= LEECH_LAPSES ? ` · forgotten ${x.info.lapses} times` : ''}`;
 }
+A.setDeckLang = async (id, lang) => { const d = store.get(id); if (d) await store.put({ ...d, lang }); render(); };
 A.renameDeck = id => modal({ title: 'Rename deck', html: `<input id="modalin" value="${esc(deckName(id))}" maxlength="40" data-autofocus>`, ok: 'Save',
   onOk: async v => { const name = (v || '').trim(); if (name) await store.put({ ...store.get(id), name }); render(); } });
 A.deleteDeck = id => {
@@ -659,7 +678,7 @@ V.card = () => {
   const it = model().byId.get(UI.cardId); if (!it) return V.deck();
   const e = UI.edit; const decks = model().decks; const leech = it.info.lapses >= LEECH_LAPSES;
   const reviews = it.log.length;
-  return `<div class="top"><button class="btn ghost sm" onclick="A.go('deck')" aria-label="Back to deck">‹</button><h2 class="spacer">${esc(it.card.word)}</h2>${speakBtn(it.card.word)}</div><div class="scroll">
+  return `<div class="top"><button class="btn ghost sm" onclick="A.go('deck')" aria-label="Back to deck">‹</button><h2 class="spacer" data-notr>${esc(it.card.word)}</h2>${speakBtn(it.card.word, deckLang(it.card.deckId))}</div><div class="scroll">
   ${leech ? `<div class="err"><b>Leech:</b> you've forgotten this card ${it.info.lapses} times. Try a clearer explanation or a personal example, or suspend it for now.</div>` : ''}
   ${it.card.suspended ? `<div class="warn">This card is suspended. It won't appear in study sessions.</div>` : ''}
   ${e.fillLater ? `<div class="warn">This card needs details. ${navigator.onLine ? `<button class="link" onclick="A.cardAutofill()">Auto-fill from the dictionary</button>` : 'Connect to the internet to auto-fill.'}</div>` : ''}
@@ -686,11 +705,11 @@ A.saveCard = async () => {
 };
 A.cardAutofill = async () => {
   const e = UI.edit; UI.cardMsg = 'Looking up…'; render();
-  const [res, sents] = await Promise.all([lookupWord(e.word), exampleSentences(e.word, 1)]);
+  const [res, sents] = await Promise.all([lookupWordIn(e.word, deckLang(e.deckId)), exampleSentencesIn(e.word, 1, deckLang(e.deckId))]);
   if (res.status === 'ok') {
     if (!String(e.explanation || '').trim()) e.explanation = res.meanings[0]?.def || '';
     if (!String(e.example || '').trim()) e.example = res.meanings.find(m => m.example)?.example || sents[0] || '';
-    if (!String(e.ipa || '').trim()) e.ipa = res.ipa || await pronunciation(res.word || e.word);
+    if (!String(e.ipa || '').trim()) e.ipa = res.ipa || await pronunciationIn(res.word || e.word, deckLang(e.deckId));
     UI.cardMsg = 'Filled from the dictionary. Check it, then tap Save changes.';
   } else UI.cardMsg = { notfound: 'No dictionary entry found. Type the details yourself.', offline: 'You are offline.', slow: 'Connection is slow. Try again later.' }[res.status] || 'Lookup failed. Try again later.';
   render();
@@ -726,9 +745,14 @@ V.settings = () => {
   <div class="toggle"><span>Voice accent</span><div class="seg">${['UK', 'US'].map(a => `<button class="${st.accent === a ? 'on' : ''}" onclick="ls_clearVoice();A.setSetting('accent','${a}')">${a}</button>`).join('')}</div></div>
   <div class="toggle"><span><label for="svoice" style="margin:0;color:var(--ink);font-size:14px;font-weight:400">Voice on this device</label><span class="small muted">Pick the one that sounds best</span></span>
    <span style="display:flex;gap:6px;align-items:center;min-width:0">${(() => { const list = englishVoices(st.accent === 'US' ? 'en-US' : 'en-GB'); const cur = chosenVoice();
-     return list.length ? `<select id="svoice" style="max-width:170px" onchange="A.setVoice(this.value)">${list.map(v => `<option value="${esc(v.name)}" ${cur && cur.name === v.name ? 'selected' : ''}>${esc(v.name.replace(/^Microsoft /, '').replace(/ - English.*$/, '').replace(/ Online \(Natural\)/, ' (Natural)'))} · ${esc(v.lang)}</option>`).join('')}</select>` : '<span class="small muted">No English voices found</span>'; })()}
+     return list.length ? `<select id="svoice" style="max-width:170px" onchange="A.setVoice(this.value)" data-notr>${list.map(v => `<option value="${esc(v.name)}" ${cur && cur.name === v.name ? 'selected' : ''}>${esc(v.name.replace(/^Microsoft /, '').replace(/ - English.*$/, '').replace(/ Online \(Natural\)/, ' (Natural)'))} · ${esc(v.lang)}</option>`).join('')}</select>` : '<span class="small muted">No English voices found</span>'; })()}
    <button class="speak" aria-label="Test voice" onclick="A.speak('Hello! This is how SR App will read your words.')">${ICON.speak}</button></span></div>
+  ${model().decks.some(d => d.lang === 'fr') ? `<div class="toggle"><span><label for="svoicefr" style="margin:0;color:var(--ink);font-size:14px;font-weight:400">French voice</label><span class="small muted">Used for French decks</span></span>
+   <span style="display:flex;gap:6px;align-items:center;min-width:0">${(() => { const list = englishVoices('fr-FR'); const cur = chosenVoice('fr');
+     return list.length ? `<select id="svoicefr" style="max-width:170px" onchange="A.setVoiceFr(this.value)" data-notr>${list.map(v => `<option value="${esc(v.name)}" ${cur && cur.name === v.name ? 'selected' : ''}>${esc(v.name.replace(/^Microsoft /, '').replace(/ - French.*$/, '').replace(/ Online \(Natural\)/, ' (Natural)'))} · ${esc(v.lang)}</option>`).join('')}</select>` : '<span class="small muted">No French voices found</span>'; })()}
+   <button class="speak" aria-label="Test voice" onclick="A.speak('Bonjour ! Voici comment SR App lira vos mots.', 'fr')">${ICON.speak}</button></span></div>` : ''}
   <div class="toggle" style="flex-direction:column;align-items:flex-start"><span>Study modes <span class="small muted">(at least one stays on)</span></span><div class="chips">${Object.keys(MODE_NAME).map(k => `<button class="chip ${st.modes[k] ? 'on' : ''}" onclick="A.toggleMode('${k}')">${MODE_NAME[k]}</button>`).join('')}</div></div>
+  <div class="toggle"><span>App language</span><div class="seg">${[['en', 'English'], ['fr', 'Français']].map(([v, n]) => `<button class="${uiLang() === v ? 'on' : ''}" onclick="A.setUiLang('${v}')" data-notr>${n}</button>`).join('')}</div></div>
   <div class="toggle" style="flex-direction:column;align-items:flex-start"><span>Text size <span class="small muted">(this device)</span></span><div class="seg">${TEXT_SIZES.map(([v, n]) => `<button class="${ls.get('sr-textsize', '100') === v ? 'on' : ''}" onclick="A.setTextSize('${v}')">${n}</button>`).join('')}</div></div>
   <div class="toggle"><span>Theme</span><div class="seg">${[['system', 'System'], ['light', 'Light'], ['dark', 'Dark']].map(([v, n]) => `<button class="${st.theme === v ? 'on' : ''}" onclick="A.setSetting('theme','${v}')">${n}</button>`).join('')}</div></div>
   <div class="toggle"><span>Sync<br><span class="small muted">${{ synced: 'All changes synced', syncing: 'Syncing…', offline: 'Offline — saved on this device', failed: 'Sync failed', login: 'Log in again to sync', unavailable: 'Sync unavailable' }[s.state]}${store.outbox.size ? ` · ${store.outbox.size} waiting` : ''}</span></span><button class="chip" onclick="${s.state === 'login' ? 'A.relogin()' : 'A.syncNow()'}">${s.state === 'login' ? 'Log in' : 'Sync now'}</button></div>
@@ -739,6 +763,7 @@ V.settings = () => {
   <p class="small muted">SR App · words: Free Dictionary API (Wiktionary, CC BY-SA) and Tatoeba (CC BY 2.0 FR).</p></div>${tabs()}`;
 };
 A.syncNow = () => sync.syncNow();
+A.setUiLang = l => { setUiLang(l); render(); };
 A.setSetting = async (k, v, min, max) => {
   const cur = store.get('settings') || { id: 'settings', type: 'settings' };
   if (min !== undefined) { v = Math.round(Number(v)); if (!Number.isFinite(v)) v = DEFAULTS[k]; v = Math.min(max, Math.max(min, v)); }
@@ -760,7 +785,7 @@ addEventListener('resize', () => applyTextSize());
 A.setTextSize = v => { ls.set('sr-textsize', v); applyTextSize(); render(); };
 applyTextSize();
 function applyTheme() { const t = settings().theme; if (t === 'system') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', t); }
-V.help = () => `<div class="top"><button class="btn ghost sm" onclick="A.go('settings')" aria-label="Back">‹</button><h2 class="spacer">Add words from other apps</h2></div><div class="scroll">
+V.help = () => uiLang() === 'fr' ? helpFr() : `<div class="top"><button class="btn ghost sm" onclick="A.go('settings')" aria-label="Back">‹</button><h2 class="spacer">Add words from other apps</h2></div><div class="scroll">
   <h3 style="margin:0">On PC (Chrome or Edge)</h3>
   <div class="step"><span class="n">1</span><span>Install the SR App extension once (Andy has the folder): open <b>chrome://extensions</b>, turn on <b>Developer mode</b>, click <b>Load unpacked</b> and pick the <b>extension</b> folder.</span></div>
   <div class="step"><span class="n">2</span><span>On any web page, highlight a word, right-click, choose <b>Add to SR App</b>.</span></div>
@@ -882,3 +907,24 @@ async function boot() {
 }
 addEventListener('hashchange', () => { if (/(confirmation|recovery|invite|email_change)_token=|error=/.test(location.hash)) location.reload(); });
 boot();
+
+// French version of the "Add words from other apps" guide (written as whole sentences rather than translated in pieces).
+function helpFr() {
+  return `<div class="top"><button class="btn ghost sm" onclick="A.go('settings')" aria-label="Retour" data-notr>‹</button><h2 class="spacer" data-notr>Ajouter des mots depuis d’autres apps</h2></div><div class="scroll" data-notr>
+  <h3 style="margin:0">Sur PC (Chrome ou Edge)</h3>
+  <div class="step"><span class="n">1</span><span>Installez une fois l’extension SR App : ouvrez <b>chrome://extensions</b>, activez le <b>Mode développeur</b>, cliquez sur <b>Charger l’extension non empaquetée</b> et choisissez le dossier <b>extension</b>.</span></div>
+  <div class="step"><span class="n">2</span><span>Sur n’importe quelle page web, sélectionnez un mot, faites un clic droit et choisissez <b>Add to SR App</b>.</span></div>
+  <h3 style="margin:8px 0 0">Sur iPhone (Safari ou Chrome)</h3>
+  <p class="small muted">Créez le raccourci une seule fois, environ 2 minutes :</p>
+  <div class="step"><span class="n">1</span><span>Ouvrez l’app <b>Raccourcis</b>, touchez <b>+</b> et nommez le raccourci <b>Add to SR App</b>.</span></div>
+  <div class="step"><span class="n">2</span><span>Touchez <b>ⓘ</b> et activez <b>Afficher dans la feuille de partage</b>. Choisissez de recevoir du <b>Texte</b>.</span></div>
+  <div class="step"><span class="n">3</span><span>Ajoutez l’action <b>Encoder l’URL</b> appliquée à l’<b>Entrée du raccourci</b>.</span></div>
+  <div class="step"><span class="n">4</span><span>Ajoutez l’action <b>Texte</b>. Collez cette adresse, puis insérez juste après <b>Texte encodé en URL</b> :</span></div>
+  <pre class="code">${esc(MAIN_APP_URL)}?add=</pre>
+  <div class="step"><span class="n">5</span><span>Ajoutez l’action <b>Ouvrir les URL</b> (elle utilise le Texte ci-dessus). Touchez <b>OK</b>.</span></div>
+  <div class="step"><span class="n">6</span><span>Essayez : sélectionnez un mot dans Safari ou Chrome, touchez <b>Partager</b>, puis <b>Add to SR App</b>. Pour le partager en famille : dans Raccourcis, maintenez-le appuyé, <b>Partager</b>, <b>Copier le lien iCloud</b>.</span></div>
+  <p class="note">Le raccourci ouvre SR App dans votre navigateur. Connectez-vous-y une fois : l’app de l’écran d’accueil et le navigateur ont des connexions séparées.</p>
+  <h3 style="margin:8px 0 0">Sur Android</h3>
+  <div class="step"><span class="n">1</span><span>Installez SR App sur l’écran d’accueil (menu du navigateur → <b>Installer l’application</b>).</span></div>
+  <div class="step"><span class="n">2</span><span>Sélectionnez un mot → <b>Partager</b> → <b>SR App</b>.</span></div></div>${tabs()}`;
+}

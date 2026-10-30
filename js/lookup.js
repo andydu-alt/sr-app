@@ -125,3 +125,121 @@ export async function pronunciation(word) {
   if (parts.some(p => !p)) return '';
   return '/' + parts.map(p => p.replace(/^[\/\[]|[\/\]]$/g, '')).join(' ') + '/';
 }
+
+// ───────── French: French Wiktionary (French explanations), Tatoeba French sentences ─────────
+const FR_API = 'https://fr.wiktionary.org/w/api.php?action=parse&prop=wikitext&format=json&origin=*&redirects=1&page=';
+const FR_LABEL = new Set(['term', 'terme', 'lexique', 'info lex', 'figuré', 'familier', 'populaire', 'vieilli', 'littéraire', 'soutenu', 'péjoratif', 'argot', 'désuet', 'rare', 'ironique', 'informatique', 'cuisine', 'médecine', 'droit', 'économie', 'commerce', 'botanique', 'zoologie', 'sport', 'musique', 'québec', 'belgique', 'suisse', 'france']);
+function frClean(w) {
+  let s = String(w || '').replace(/<ref[^>]*>[\s\S]*?<\/ref>|<ref[^/]*\/>/g, '').replace(/<[^>]+>/g, '');
+  for (let k = 0; k < 4 && /\{\{/.test(s); k++) s = s.replace(/\{\{([^{}]*)\}\}/g, (_, inner) => {
+    const [name, ...args] = inner.split('|').map(x => x.trim()); const n = name.toLowerCase();
+    if (n === 'lien' || n === 'l' || n === 'w') return args[0] || '';
+    if (FR_LABEL.has(n)) return `(${(n === 'term' || n === 'terme' || n === 'lexique' || n === 'info lex') ? (args[0] || '') : n})`;
+    if (args.length === 1 && args[0] === 'fr' && /^[\p{L} -]+$/u.test(name)) return `(${name})`;
+    return '';
+  });
+  return s.replace(/\[\[(?:[^\]|]*\|)?([^\]]*)\]\]/g, '$1').replace(/'''?/g, '').replace(/\(\s*\)/g, '').replace(/\s+/g, ' ').replace(/^[\s,;:]+/, '').trim();
+}
+const braceDepth = s => (s.match(/\{\{/g) || []).length - (s.match(/\}\}/g) || []).length;
+// First unnamed argument of {{exemple|…}} (split on top-level "|" only).
+function exempleText(raw) {
+  const start = raw.indexOf('{{exemple'); if (start < 0) return raw;
+  let depth = 0, i = start, inner = '';
+  for (; i < raw.length; i++) {
+    if (raw.startsWith('{{', i) || raw.startsWith('[[', i)) { depth++; inner += raw.substr(i, 2); i++; continue; }
+    if (raw.startsWith('}}', i) || raw.startsWith(']]', i)) { depth--; if (depth === 0) break; inner += raw.substr(i, 2); i++; continue; }
+    inner += raw[i];
+  }
+  inner = inner.replace(/^\{\{exemple/, '');
+  const args = []; let cur = '', d = 0;
+  for (let k = 0; k < inner.length; k++) {
+    if (inner.startsWith('{{', k) || inner.startsWith('[[', k)) { d++; cur += inner.substr(k, 2); k++; continue; }
+    if (inner.startsWith('}}', k) || inner.startsWith(']]', k)) { d--; cur += inner.substr(k, 2); k++; continue; }
+    if (inner[k] === '|' && d === 0) { args.push(cur); cur = ''; continue; }
+    cur += inner[k];
+  }
+  args.push(cur);
+  const text = args.map(a => a.trim()).filter(a => a && !/^[\w-]+\s*=/.test(a))[0] || '';
+  return text;
+}
+function parseFrench(text) {
+  const sec = text.split(/\n== /).find(s => /^\s*\{\{langue\|fr\}\}/.test(s)) || (/^== \{\{langue\|fr\}\}/.test(text) ? text : '');
+  if (!sec) return null;
+  const meanings = []; let pos = '', flex = false, ipa = '', base = '', inPron = false;
+  const lines = sec.split('\n');
+  // Pronunciation: the headword line of the first word section ("'''maison''' {{pron|me.zɔ̃|fr}}"); regional variants come later.
+  const PRON = /\{\{pron\|([^|}]+)\|(?:[^{}]*\|)?fr\}\}/;
+  { let inWord = false;
+    for (const l of lines) {
+      if (/^===+\s*\{\{S\|[^|}]+\|fr/.test(l)) { inWord = true; continue; }
+      if (inWord && /^'''/.test(l)) { const p = PRON.exec(l); if (p) { ipa = '/' + p[1].trim() + '/'; break; } }
+    }
+    if (!ipa) for (const l of lines) { if (/^===+\s*\{\{S\|prononciation\}\}/.test(l)) { inPron = true; continue; } if (/^===/.test(l)) inPron = false;
+      const p = inPron && !/:/.test(l.split('{{pron')[0]) && PRON.exec(l); if (p) { ipa = '/' + p[1].trim() + '/'; break; } }
+  }
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    const h = /^===+\s*\{\{S\|([^|}]+)\|fr([^}]*)\}\}/.exec(l);
+    if (h) { pos = h[1]; flex = /flexion/.test(h[2]); continue; }
+    if (/^===/.test(l)) { pos = ''; continue; }
+    if (!ipa) { const p = /\{\{pron\|([^|}]+)\|fr\}\}/.exec(l); if (p && pos) ipa = `/${p[1].trim()}/`; }
+    const d = /^#(?![*:#])\s*(.+)/.exec(l);
+    if (!d || !pos) continue;
+    if (flex) { const b = /\[\[([^\]|#]+)/.exec(d[1]); if (b && !base) base = b[1]; continue; }
+    const def = frClean(d[1]);
+    if (!def || def.length < 3) continue;
+    let example = '';
+    for (let j = i + 1; j < lines.length && /^#[*:]/.test(lines[j]); j++) {
+      const e = /^#\*\s*(.+)/.exec(lines[j]); if (!e) continue;
+      let raw = e[1];
+      if (/\{\{exemple/.test(raw)) {
+        // {{exemple|lang=fr|The sentence.|source=…}} may run over several lines: join until the braces close.
+        let k = j; while (braceDepth(raw) > 0 && k + 1 < lines.length) raw += '\n' + lines[++k];
+        raw = exempleText(raw);
+      }
+      const c = frClean(raw); if (c.length > 8 && !/^—/.test(c)) { example = c.replace(/^[«"“]\s*|\s*[»"”]$/g, ''); break; }
+    }
+    meanings.push({ pos, def, example });
+  }
+  return { meanings: meanings.slice(0, 8), ipa, base };
+}
+async function lookupFrench(word) {
+  if (!navigator.onLine) return { status: 'offline', word, meanings: [], ipa: '' };
+  const w0 = word.trim().replace(/\s+/g, ' ');
+  const tries = [...new Set([w0.toLowerCase(), w0])];
+  let sawError = false;
+  for (const w of tries) {
+    const r = await getJSON(FR_API + encodeURIComponent(w.replace(/ /g, '_')));
+    if (r.slow) return { status: 'slow', word, meanings: [], ipa: '' };
+    if (r.error) { sawError = true; continue; }
+    const text = r.data && r.data.parse && r.data.parse.wikitext && r.data.parse.wikitext['*'];
+    if (!text) continue;
+    const p = parseFrench(text);
+    if (p && p.meanings.length) return { status: 'ok', word: w, base: false, meanings: p.meanings, ipa: p.ipa };
+    if (p && p.base && p.base !== w) {
+      // Inflected form ("dépendait") → the dictionary entry of its base form ("dépendre").
+      const rb = await getJSON(FR_API + encodeURIComponent(p.base.replace(/ /g, '_')));
+      const tb = rb.data && rb.data.parse && rb.data.parse.wikitext && rb.data.parse.wikitext['*'];
+      const pb = tb && parseFrench(tb);
+      if (pb && pb.meanings.length) return { status: 'ok', word: p.base, base: true, meanings: pb.meanings, ipa: pb.ipa };
+    }
+  }
+  return { status: sawError ? 'error' : 'notfound', word, meanings: [], ipa: '' };
+}
+export const lookupWordIn = (word, lang = 'en') => lang === 'fr' ? lookupFrench(word) : lookupWord(word);
+export async function exampleSentencesIn(word, max = 4, lang = 'en') {
+  if (lang !== 'fr') return exampleSentences(word, max);
+  if (!navigator.onLine) return [];
+  const r = await getJSON(`${TATOEBA}?lang=fra&q=${encodeURIComponent('"' + word + '"')}&sort=random&limit=20`, TIMEOUT);
+  if (!r.data || !Array.isArray(r.data.data)) return [];
+  const texts = r.data.data.map(s => s.text).filter(t => t && t.length <= 160);
+  return [...texts.filter(t => containsWord(t, word)), ...texts.filter(t => !containsWord(t, word))].slice(0, max);
+}
+export async function pronunciationIn(word, lang = 'en') {
+  if (lang !== 'fr') return pronunciation(word);
+  if (!navigator.onLine) return '';
+  const r = await getJSON(FR_API + encodeURIComponent(word.trim().toLowerCase().replace(/ /g, '_')), 5000);
+  const text = r.data && r.data.parse && r.data.parse.wikitext && r.data.parse.wikitext['*'];
+  return (text && (parseFrench(text) || {}).ipa) || '';
+}
+export const _parseFrench = parseFrench; // for tests
