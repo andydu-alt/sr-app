@@ -23,6 +23,15 @@ export function dayStart(t = Date.now()) {
 export const nextDayStart = (t = Date.now()) => { const d = new Date(dayStart(t)); d.setDate(d.getDate() + 1); return d.getTime(); };
 export const dayKey = t => { const d = new Date(dayStart(t)); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); };
 
+// After a mistake (relearning), the next correct answer restarts small: Hard 1d, Good 2d, Easy 4d.
+const AFTER_MISS_DAYS = { 2: 1, 3: 2, 4: 4 };
+function step(f, c, at, rating) {
+  const n = f.next(c, at, rating).card;
+  const d = c.state === State.Relearning && AFTER_MISS_DAYS[rating];
+  if (!d) return n;
+  return { ...n, state: State.Review, scheduled_days: d, stability: Math.min(n.stability, d), due: new Date(at.getTime() + d * DAY) };
+}
+
 // Replay one card's reviews (sorted by time). A rating of 0 is a reset.
 export function replay(f, card, reviews) {
   let c = createEmptyCard(new Date(card.createdAt || 0));
@@ -32,7 +41,7 @@ export function replay(f, card, reviews) {
     if (r.rating === 0) { c = createEmptyCard(new Date(r.time)); firstReview = null; log.length = 0; continue; }
     const prev = c.state;
     const at = new Date(Math.max(r.time, c.last_review ? c.last_review.getTime() : 0));
-    c = f.next(c, at, r.rating).card;
+    c = step(f, c, at, r.rating);
     if (firstReview === null) firstReview = r.time;
     log.push({ time: r.time, rating: r.rating, prev });
   }
@@ -49,8 +58,8 @@ export function cardInfo(fc) {
 
 // Interval labels for the four buttons, e.g. {again:'1m', hard:'6m', good:'10m', easy:'4d'}.
 export function previewIntervals(f, fc, now = Date.now()) {
-  const r = f.repeat(fc, new Date(now)); const out = {};
-  for (const [k, g] of Object.entries(RATING)) out[k] = fmtInterval(r[g].card.due.getTime() - now);
+  const out = {};
+  for (const [k, g] of Object.entries(RATING)) out[k] = fmtInterval(step(f, fc, new Date(now), g).due.getTime() - now);
   return out;
 }
 export function fmtInterval(ms) {
