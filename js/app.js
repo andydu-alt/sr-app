@@ -77,7 +77,7 @@ function deckStats(deckId) {
 // ───────── Rendering ─────────
 function go(screen, extra = {}, push = true) {
   UI = { ...UI, ...extra, screen, modal: null };
-  UI.tab = { home: 'home', study: 'home', read: 'home', done: 'home', decks: 'decks', deck: 'decks', card: 'decks', import: 'decks', progress: 'progress', settings: 'settings', help: 'settings' }[screen] || UI.tab;
+  UI.tab = { home: 'home', study: 'home', read: 'home', exam: 'decks', done: 'home', decks: 'decks', deck: 'decks', card: 'decks', import: 'decks', progress: 'progress', settings: 'settings', help: 'settings' }[screen] || UI.tab;
   if (push) try { history.pushState({ screen }, ''); } catch {}
   render();
   const sc = $app.querySelector('.scroll'); if (sc) sc.scrollTop = 0;
@@ -346,6 +346,72 @@ let readX = null;
 document.addEventListener('touchstart', e => { readX = UI.screen === 'read' && e.target.closest('#readcard') ? e.touches[0].clientX : null; }, { passive: true });
 document.addEventListener('touchend', e => { if (readX === null) return; const dx = e.changedTouches[0].clientX - readX; readX = null;
   if (Math.abs(dx) > 50) A.readStep(dx < 0 ? 1 : -1); }, { passive: true });
+
+// ───────── Mock exam (timed, graded at the end, no effect on the schedule) ─────────
+const EXAM_AREAS = { 'Needs Assessment': 18, 'Planning': 22, 'Analysis': 35, 'Traceability and Monitoring': 15, 'Evaluation': 10 };
+const EXAM_SECS = 72; // 200 questions in 4 hours
+const shuffle = a => { a = [...a]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+A.examSetup = deckId => {
+  const n = store.all('card').filter(c => c.deckId === deckId && c.choices).length;
+  const sizes = [...new Set([50, 100, 200].map(k => Math.min(k, n)))];
+  modal({ title: 'Mock exam', ok: 'Close', alt: 'Cancel', onOk: () => render(),
+    html: `<p>Questions follow the real exam's area shares and are graded only at the end. Your review schedule is not changed. You get 72 seconds per question, like the real exam.</p>
+    <div class="list">${sizes.map(k => `<button class="row" onclick="A.examStart('${deckId}',${k})"><div><b>${k} questions</b><span class="sub">${fmtClock(k * EXAM_SECS * 1000)}${k === 200 ? ' · full exam' : ''}</span></div></button>`).join('')}</div>` });
+};
+A.examStart = (deckId, n) => {
+  const pool = store.all('card').filter(c => c.deckId === deckId && c.choices); const by = {};
+  for (const c of shuffle(pool)) { const t = (c.tags || [])[0]; (by[t in EXAM_AREAS ? t : 'Other'] ||= []).push(c); }
+  let picks = []; for (const [t, w] of Object.entries(EXAM_AREAS)) picks.push(...(by[t] || []).splice(0, Math.round(n * w / 100)));
+  const rest = shuffle(Object.values(by).flat()); while (picks.length < n && rest.length) picks.push(rest.pop());
+  picks = shuffle(picks.slice(0, n));
+  UI.modal = null; clearInterval(UI.examTimer);
+  go('exam', { exam: { deckId, qs: picks.map(c => ({ id: c.id, opts: shuffle(c.choices), pick: null, flag: false })), i: 0, end: Date.now() + n * EXAM_SECS * 1000, done: false } });
+  UI.examTimer = setInterval(() => {
+    const e = UI.exam; if (!e || e.done) return clearInterval(UI.examTimer);
+    const left = e.end - Date.now(); if (left <= 0) { A.examFinish(true); return; }
+    const el = document.getElementById('extime'); if (el) el.textContent = fmtClock(left);
+  }, 1000);
+};
+function fmtClock(ms) { const t = Math.max(0, Math.round(ms / 1000)); return `${Math.floor(t / 3600)}:${String(Math.floor(t / 60) % 60).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`; }
+V.exam = () => {
+  const e = UI.exam; if (!e) return V.home(); if (e.done) return examResult(e);
+  const q = e.qs[e.i]; const c = store.get(q.id) || {}; const answered = e.qs.filter(x => x.pick !== null).length;
+  return `<div class="top"><button class="btn ghost sm" onclick="A.examQuit()">✕ Quit</button><b id="extime">${fmtClock(e.end - Date.now())}</b><button class="btn ghost sm" onclick="A.examFinish()">Finish</button></div>
+  <div class="scroll"><div class="small muted">Question ${e.i + 1} of ${e.qs.length} · ${answered} answered</div><div class="progressbar"><i style="width:${(e.i + 1) / e.qs.length * 100}%"></i></div>
+  <div class="card"><div class="inner" style="text-align:left;align-items:stretch"><div style="font-size:18px">${esc(c.word || '')}</div>
+  <div class="opts">${q.opts.map((o, i) => `<button class="opt ${q.pick === i ? 'right' : ''}" onclick="A.examPick(${i})">${'ABCD'[i]}. ${esc(o)}</button>`).join('')}</div></div></div>
+  <div class="rate"><button onclick="A.examGo(-1)" ${e.i ? '' : 'disabled'}>‹ Back</button><button class="${q.flag ? 'pre' : ''}" onclick="A.examFlag()">${q.flag ? '⚑ Flagged' : '⚐ Flag'}</button><button onclick="A.examGo(1)">${e.i + 1 < e.qs.length ? 'Next ›' : 'Review'}</button></div>
+  ${e.review ? `<p class="small muted">Tap a number to go back. Faded = not answered, ⚑ = flagged.</p><div class="chips">${e.qs.map((x, i) => `<button class="chip ${i === e.i ? 'on' : ''}" style="${x.pick === null ? 'opacity:.5' : ''}" onclick="A.examJump(${i})">${i + 1}${x.flag ? '⚑' : ''}</button>`).join('')}</div>` : ''}</div>`;
+};
+A.examPick = i => { const e = UI.exam; e.qs[e.i].pick = i; render(); };
+A.examFlag = () => { const q = UI.exam.qs[UI.exam.i]; q.flag = !q.flag; render(); };
+A.examGo = n => { const e = UI.exam; const i = e.i + n; if (i < 0) return; if (i >= e.qs.length) e.review = true; else e.i = i; render(); };
+A.examJump = i => { UI.exam.i = i; render(); };
+A.examQuit = () => { if (!confirm('Quit the mock exam? Your answers will be lost.')) return; clearInterval(UI.examTimer); UI.exam = null; go('home'); };
+A.examFinish = (timeUp = false) => {
+  const e = UI.exam; if (!e || e.done) return;
+  const blank = e.qs.filter(x => x.pick === null).length;
+  if (!timeUp && blank && !confirm(`${blank} question${blank > 1 ? 's are' : ' is'} not answered. Finish anyway?`)) return;
+  clearInterval(UI.examTimer); e.done = true; e.used = Math.min(Date.now(), e.end) - (e.end - e.qs.length * EXAM_SECS * 1000);
+  if (timeUp) toast('Time is up.');
+  const ok = e.qs.filter(x => x.pick !== null && x.opts[x.pick] === (store.get(x.id) || {}).explanation).length;
+  try { const h = JSON.parse(ls.get('exams', '[]')); h.push({ t: Date.now(), n: e.qs.length, ok }); ls.set('exams', JSON.stringify(h.slice(-20))); } catch {}
+  render(); const sc = $app.querySelector('.scroll'); if (sc) sc.scrollTop = 0;
+};
+function examResult(e) {
+  const rows = e.qs.map(x => { const c = store.get(x.id) || {}; return { x, c, ok: x.pick !== null && x.opts[x.pick] === c.explanation, area: (c.tags || [])[0] || 'Other' }; });
+  const ok = rows.filter(r => r.ok).length; const pc = Math.round(ok / rows.length * 100); const by = {};
+  for (const r of rows) { const b = by[r.area] ||= { ok: 0, n: 0 }; b.n++; if (r.ok) b.ok++; }
+  let hist = []; try { hist = JSON.parse(ls.get('exams', '[]')).slice(-6, -1); } catch {}
+  return `<div class="top"><h2>Mock exam result</h2><button class="btn ghost sm" onclick="UI.exam=null;A.go('home')">Done</button></div><div class="scroll">
+  <div class="stat-row"><div class="stat"><b>${pc}%</b><span>${ok} of ${rows.length} correct</span></div><div class="stat"><b>${fmtClock(e.used)}</b><span>time used</span></div></div>
+  <p class="small muted">PMI does not publish a pass mark. Many candidates aim for 70% or more on practice exams.${hist.length ? ' Earlier on this device: ' + hist.map(h => Math.round(h.ok / h.n * 100) + '%').join(', ') + '.' : ''}</p>
+  <div><label>By exam area</label>${Object.entries(by).sort((a, b) => a[1].ok / a[1].n - b[1].ok / b[1].n).map(([t, b]) => { const p = Math.round(b.ok / b.n * 100);
+    return `<div class="small" style="display:flex;justify-content:space-between;margin-top:6px"><span>${esc(t)}</span><span>${p}% · ${b.ok}/${b.n}</span></div><div class="bar"><i style="width:${p}%"></i></div>`; }).join('')}</div>
+  <label>Questions you missed</label>${rows.filter(r => !r.ok).map(r => `<div class="card"><div class="inner" style="text-align:left;align-items:stretch;gap:6px"><div>${esc(r.c.word || '')}</div>
+    ${r.x.pick !== null ? `<div class="small" style="color:var(--again)">Your answer: ${esc(r.x.opts[r.x.pick])}</div>` : '<div class="small muted">Not answered</div>'}
+    <div class="small" style="color:var(--good)">Correct: ${esc(r.c.explanation || '')}</div>${r.c.why ? `<div class="small muted">${esc(r.c.why)}</div>` : ''}</div></div>`).join('') || '<p class="muted">None. Well done.</p>'}</div>`;
+}
 
 // ───────── Study ─────────
 A.study = (deckId = null, extraNew = 0) => {
@@ -724,13 +790,14 @@ V.deck = () => {
   return `<div class="top"><button class="btn ghost sm" onclick="A.go('decks')" aria-label="Back to decks">‹</button><h2 class="spacer" ${deck ? 'data-notr' : ''}>${esc(deck ? deck.name : 'All decks')}</h2><button class="btn ghost sm" onclick="A.openAdd({deckId:'${deck ? deck.id : ''}'})">+ Add</button></div><div class="scroll">
   ${!cards.length ? `<div class="empty"><div class="big">Aa</div><h3 style="margin:0">No cards yet</h3><p class="muted">Add words here, highlight them on web pages, or import a list.</p><button class="btn" onclick="A.openAdd({deckId:'${deck ? deck.id : ''}'})">Add a word</button><button class="btn ghost" onclick="A.openImport('${deck ? deck.id : ''}')">Import a list</button></div>` : `
   ${s && s.due + s.newCount ? `<button class="btn" onclick="A.study('${deck.id}')">Study this deck · ${s.due} due, ${s.newCount} new</button>` : ''}
+  ${deck && cards.some(x => x.card.choices) ? `<button class="btn ghost" onclick="A.examSetup('${deck.id}')">Mock exam</button>` : ''}
   <input id="srch" placeholder="Search word, explanation, tag" value="${esc(UI.search || '')}" oninput="UI.search=this.value;A.rerender()" aria-label="Search cards">
   <div class="chips">${FILTERS.filter(f => f === 'All' || counts[f]).map(f => `<button class="chip ${UI.filter === f ? 'on' : ''}" onclick="UI_filter('${f}')">${f} ${counts[f]}</button>`).join('')}</div>
   ${rows.length ? `<div class="list">${rows.slice(0, 300).map(x => { const t = x.card.suspended ? ['Suspended', ''] : x.info.lapses >= LEECH_LAPSES ? ['Leech', 'leech'] : x.card.fillLater ? ['Fill later', 'fill'] : x.info.mastered ? ['Mastered', ''] : null;
       return `<button class="row" onclick="A.openCard('${x.card.id}')"><div><b data-notr>${esc(x.card.word)}</b><span class="sub">${esc(cardSub(x))}</span></div>${t ? `<span class="tag ${t[1]}">${t[0]}</span>` : ''}</button>`; }).join('')}</div>${rows.length > 300 ? `<p class="small muted">Showing 300 of ${rows.length}. Search to narrow down.</p>` : ''}`
     : `<div class="empty"><h3 style="margin:0">No cards match</h3><p class="muted">Try another word, or add it as a new card.</p><button class="btn ghost" onclick="A.openAdd({word:UI.search||'',deckId:'${deck ? deck.id : ''}'})">Add it</button></div>`}`}
   ${deck ? `<div class="toggle"><span>Include in Study all</span>${switchHtml(deck)}</div>
-  <div class="toggle"><span>Language of the words</span><div class="seg">${[['en', 'English'], ['fr', 'French']].map(([v, n]) => `<button class="${(deck.lang || 'en') === v ? 'on' : ''}" onclick="A.setDeckLang('${deck.id}','${v}')">${n}</button>`).join('')}</div></div>
+  ${deck.lang === 'none' ? '' : `<div class="toggle"><span>Language of the words</span><div class="seg">${[['en', 'English'], ['fr', 'French']].map(([v, n]) => `<button class="${(deck.lang || 'en') === v ? 'on' : ''}" onclick="A.setDeckLang('${deck.id}','${v}')">${n}</button>`).join('')}</div></div>`}
   <div class="chips"><button class="chip" onclick="A.openImport('${deck.id}')">Import</button><button class="chip" onclick="A.renameDeck('${deck.id}')">Rename deck</button><button class="chip danger" onclick="A.deleteDeck('${deck.id}')">Delete deck</button></div>` : ''}
   </div>${tabs()}`;
 };
