@@ -320,11 +320,21 @@ A.quickAdd = () => { const v = document.getElementById('qa').value; if (v.trim()
 
 // ───────── Read (browse cards like stories; no test, no effect on the schedule) ─────────
 A.read = (deckId, savedOnly = false) => {
-  const ids = store.all('card').filter(c => c.deckId === deckId && (!savedOnly || c.saved)).sort((a, b) => (a.order || 0) - (b.order || 0)).map(c => c.id);
+  const ids = readOrder(deckId).filter(id => !savedOnly || store.get(id).saved);
   if (!ids.length) { toast(savedOnly ? 'No saved cards in this deck yet.' : 'This deck has no cards.'); return; }
-  const at = savedOnly ? 0 : Math.min(+ls.get('read:' + deckId, 0) || 0, ids.length - 1);
+  const at = savedOnly ? 0 : Math.min(+ls.get('readpos:' + deckId, 0) || 0, ids.length - 1);
   go('read', { reader: { deckId, ids, i: at, savedOnly } });
 };
+// Each deck keeps its own shuffled reading order on this device, so the position can be remembered.
+// Cards added later are slotted in at random places after the current position.
+function readOrder(deckId, reshuffle = false) {
+  const live = store.all('card').filter(c => c.deckId === deckId).map(c => c.id); const have = new Set(live);
+  let ord = []; if (!reshuffle) try { ord = JSON.parse(ls.get('readorder:' + deckId, '[]')).filter(id => have.has(id)); } catch {}
+  const pos = reshuffle ? 0 : +ls.get('readpos:' + deckId, 0) || 0; const inOrd = new Set(ord);
+  for (const id of shuffle(live.filter(id => !inOrd.has(id)))) { const lo = Math.min(pos + 1, ord.length); ord.splice(lo + Math.floor(Math.random() * (ord.length - lo + 1)), 0, id); }
+  try { ls.set('readorder:' + deckId, JSON.stringify(ord)); if (reshuffle) ls.set('readpos:' + deckId, 0); } catch {}
+  return ord;
+}
 V.read = () => {
   const r = UI.reader; const c = r && store.get(r.ids[r.i]); if (!c) return V.home();
   const d = store.get(r.deckId) || {}; const tags = (c.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join(' ');
@@ -342,8 +352,10 @@ V.read = () => {
   <p class="small muted center">Swipe left or right. Reading does not change your review schedule.</p></div>`;
 };
 A.readStep = n => { const r = UI.reader; const i = r.i + n; if (i < 0) return;
-  if (i >= r.ids.length) { toast('You reached the end.'); return; }
-  r.i = i; if (!r.savedOnly) ls.set('read:' + r.deckId, i); render(); };
+  if (i >= r.ids.length) { if (r.savedOnly) { toast('You reached the end.'); return; }
+    if (!confirm('You have read every card. Shuffle and start again?')) return;
+    r.ids = readOrder(r.deckId, true); r.i = 0; render(); return; }
+  r.i = i; if (!r.savedOnly) ls.set('readpos:' + r.deckId, i); render(); };
 A.readSave = async () => { const c = store.get(UI.reader.ids[UI.reader.i]); if (!c) return; await store.put({ ...c, saved: !c.saved }); render(); };
 let readX = null;
 document.addEventListener('touchstart', e => { readX = UI.screen === 'read' && e.target.closest('#readcard') ? e.touches[0].clientX : null; }, { passive: true });
