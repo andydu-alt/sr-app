@@ -285,7 +285,7 @@ V.home = () => {
   const nextDue = m.items.filter(x => !x.card.suspended && !x.info.isNew).map(x => x.info.due).sort((a, b) => a - b)[0];
   const anyNew = m.items.some(x => x.info.isNew && !x.card.suspended);
   return `<div class="top"><h2>${greeting()}, ${esc(userName())}</h2>${syncPill()}</div><div class="scroll">
-  <form class="quick" onsubmit="event.preventDefault();A.quickAdd()"><input id="qa" placeholder="Quick Add: type or paste a word" maxlength="200" autocapitalize="none" aria-label="Quick Add" oninput="document.getElementById('qab').disabled=!this.value.trim()"><button class="btn sm" id="qab" disabled type="submit">Add</button></form>
+  <form class="quick" onsubmit="event.preventDefault();A.quickAdd()"><input id="qa" placeholder="Quick Add: type or paste a word" maxlength="200" autocapitalize="none" aria-label="Quick Add" oninput="document.getElementById('qab').disabled=!this.value.trim();A.qaSuggest(this.value)"><button class="btn sm" id="qab" disabled type="submit">Add</button></form><div id="qas" class="list"></div>
   ${fill && navigator.onLine ? `<div class="banner"><span>${fill} card${fill > 1 ? 's need' : ' needs'} details.</span><button class="link" onclick="A.openDeck(null,'Fill later')">Fill now</button></div>` : ''}
   ${sync.status.state === 'login' ? `<div class="banner"><span>Log in again to sync. Your changes are safe here.</span><button class="link" onclick="A.relogin()">Log in</button></div>` : ''}
   <div class="stat-row"><div class="stat"><b>${due}</b><span>reviews due</span></div><div class="stat"><b>${nw}</b><span>new today</span></div><div class="stat"><b>${p.streak}</b><span>day streak</span></div></div>
@@ -300,6 +300,18 @@ function switchHtml(d) { return `<button class="switch ${d.off ? '' : 'on'}" rol
 A.toggleDeck = async id => { const d = store.get(id); if (!d) return; await store.put({ ...d, off: !d.off }); render(); toast(d.off ? `${d.name} is on.` : `${d.name} is off. It won't appear in Study all.`); };
 function whenText(t) { const ms = t - Date.now(); if (ms <= 0) return 'now'; if (ms < 3600000) return 'in ' + Math.ceil(ms / 60000) + ' min'; if (t < nextDayStart()) return 'in ' + Math.max(1, Math.round(ms / 3600000)) + ' h';
   const d = Math.max(1, Math.round(ms / 86400000)); if (d < 60) return `in ${d} day${d === 1 ? '' : 's'}`; const mo = Math.round(d / 30.4); return `in ${mo} months`; }
+// Live suggestions: existing cards that match what is typed; nothing shows when the word is new.
+A.qaSuggest = v => { const el = document.getElementById('qas'); if (!el) return; const q = canon(v || '');
+  if (q.length < 2) { el.innerHTML = ''; return; }
+  const rank = c => { const w = canon(c.word); return w === q ? 0 : w.startsWith(q) ? 1 : 2; };
+  const hits = store.all('card').filter(c => store.get(c.deckId) && canon(c.word).includes(q))
+    .sort((a, b) => rank(a) - rank(b) || a.word.length - b.word.length).slice(0, 6);
+  el.innerHTML = hits.length ? `<p class="small muted" style="margin:4px 0">Already in your decks:</p>` + hits.map(c => `<div class="deck"><button class="main" onclick="A.openCard('${c.id}')"><h3><span data-notr>${esc(c.word)}</span></h3><span class="counts"><span class="muted">${esc(store.get(c.deckId).name)}${rank(c) === 0 ? ' · exact match' : ''}</span></span></button><button class="btn sm ghost" onclick="A.studyWord('${c.id}')">Study</button></div>`).join('') : ''; };
+// Study one chosen word now, instead of waiting for it to come up.
+A.studyWord = id => { const it = model().byId.get(id); if (!it) return;
+  UI.session = { deckId: null, learning: [], reviews: it.info.isNew ? [] : [id], newCards: it.info.isNew ? [id] : [],
+    started: Date.now(), reviewed: 0, learned: 0, undo: [], current: null };
+  nextCard(); go('study'); };
 A.quickAdd = () => { const v = document.getElementById('qa').value; if (v.trim()) A.openAdd({ word: v }); };
 
 // ───────── Study ─────────
@@ -707,7 +719,7 @@ V.card = () => {
   <div class="field"><label for="ct">Tags</label><input id="ct" value="${esc(e.tagsText || '')}" oninput="UI_edit('tagsText',this.value)"></div>
   <div class="field"><label for="cd">Deck</label><select id="cd" onchange="UI_edit('deckId',this.value)">${decks.map(d => `<option value="${d.id}" ${d.id === e.deckId ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select></div>
   <p class="small muted">${it.info.stateName} · reviewed ${reviews} time${reviews === 1 ? '' : 's'} · forgotten ${it.info.lapses}${!it.info.isNew ? ' · next review ' + whenText(it.info.due) : ''}</p>
-  <div class="chips"><button class="chip" onclick="A.suspend()">${it.card.suspended ? 'Unsuspend' : 'Suspend'}</button><button class="chip" onclick="A.resetCard()">Reset</button><button class="chip danger" onclick="A.deleteCard()">Delete</button></div></div>
+  <div class="chips"><button class="chip" onclick="A.studyWord('${it.card.id}')">Study now</button><button class="chip" onclick="A.suspend()">${it.card.suspended ? 'Unsuspend' : 'Suspend'}</button><button class="chip" onclick="A.resetCard()">Reset</button><button class="chip danger" onclick="A.deleteCard()">Delete</button></div></div>
   <div class="foot"><button class="btn" style="flex:1" onclick="A.saveCard()">Save changes</button></div>`;
 };
 window.UI_edit = (k, v) => { UI.edit[k] = v; };
