@@ -37,7 +37,7 @@ export function gradeTyped(typed, answer) {
   const a = canon(typed), b = canon(answer);
   if (!a) return 'again';
   const d = lev(a, b);
-  return d === 0 ? 'good' : d === 1 ? 'hard' : 'again';
+  return d === 0 ? 'good' : 'again';
 }
 
 // Letter-level diff: [{t:'same'|'extra'|'missing', c}]

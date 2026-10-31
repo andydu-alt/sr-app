@@ -1,5 +1,5 @@
 // Offline support: app files cached on install; network first so updates appear on the next open, cache when offline.
-const CACHE = 'sr-app-v21';
+const CACHE = 'sr-app-v22';
 const FILES = ['./', 'index.html', 'app.css', 'manifest.json', 'icon-192.png', 'icon-512.png',
   'js/app.js', 'js/store.js', 'js/auth.js', 'js/sync.js', 'js/sched.js', 'js/text.js', 'js/lookup.js', 'js/merge.js', 'js/starter.js', 'js/config.js', 'js/i18n.js', 'js/i18n-fr.js', 'vendor/ts-fsrs.mjs'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
