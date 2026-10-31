@@ -362,9 +362,15 @@ function nextCard() {
   if (!id) { s.current = null; return; }
   const it = m.byId.get(id);
   s.current = id; s.revealed = false; s.answered = null; s.typed = ''; s.pre = null; s.learnStage = 0;
+  setMode(s, it);
+  if (s.mode === 'learn' && !s.mcOptions) s.learnFallback = true; else s.learnFallback = false;
+}
+// Practice-question cards (card.choices) are always asked as the question itself, new or not.
+function setMode(s, it) {
+  const c = it.card;
+  if (Array.isArray(c.choices) && c.choices.length) { s.mode = 'question'; s.mcOptions = [...c.choices].sort(() => Math.random() - 0.5); s.mcCorrect = c.explanation; return; }
   s.mode = it.info.isNew ? 'learn' : chooseMode(it);
   s.mcOptions = (s.mode === 'mc' || s.mode === 'learn') ? mcOptions(it) : null;
-  if (s.mode === 'learn' && !s.mcOptions) s.learnFallback = true; else s.learnFallback = false;
 }
 // Multiple choice shows one meaning: a random line of a numbered list, without its "(verb)" label.
 function mcText(expl) {
@@ -379,7 +385,7 @@ function mcOptions(it) {
 }
 function mcOptionsRaw(it) {
   const m = model(); const c = it.card;
-  const pool = m.items.filter(x => x.card.id !== c.id && canon(x.card.word) !== canon(c.word) && x.card.explanation && !similar(x.card.explanation, c.explanation));
+  const pool = m.items.filter(x => x.card.id !== c.id && !x.card.choices && canon(x.card.word) !== canon(c.word) && x.card.explanation && !similar(x.card.explanation, c.explanation));
   if (pool.length < 3) return null;
   const same = pool.filter(x => x.card.deckId === c.deckId), other = pool.filter(x => x.card.deckId !== c.deckId);
   const shuffle = a => a.map(v => [Math.random(), v]).sort((a, b) => a[0] - b[0]).map(v => v[1]);
@@ -425,6 +431,10 @@ V.study = () => {
          <div class="small muted">Correct: <b>${esc(c.word)}</b> ${esc(c.ipa || '')}</div>${s.pre !== 'good' ? `<div class="small muted"><del style="color:var(--again)">red</del> = extra letter · <ins style="color:var(--good)">green</ins> = missing letter</div>` : ''}${say}`
       : `<form onsubmit="event.preventDefault();A.checkTyped()"><input id="ty" data-autofocus placeholder="Type the word" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" style="text-align:center;font-size:18px" value="${esc(s.typed)}" oninput="UI_typed(this.value)"></form>`);
     actions = s.answered ? rateRow(it) : `<button class="btn" onclick="A.checkTyped()">Check <span class="small">(Enter)</span></button>`;
+  } else if (s.mode === 'question') {
+    body = `<div class="mode">Practice question${(c.tags || []).length ? ' · ' + esc(c.tags[0]) : ''}</div><div style="font-size:18px;text-align:left">${esc(c.word)}</div><div class="opts">${s.mcOptions.map((o, i) =>
+      `<button class="opt ${s.answered ? (o === s.mcCorrect ? 'right' : (s.answered === o ? 'wrong' : '')) : ''}" onclick="A.pickMC(${i})">${esc(o)}</button>`).join('')}</div>${s.answered && c.why ? `<div class="small" style="text-align:left"><b>Why:</b> ${esc(c.why)}</div>` : ''}`;
+    actions = s.answered ? rateRow(it) : '';
   } else if (s.mode === 'mc') {
     body = mcHtml(c, 'Multiple choice · pick the meaning'); actions = s.answered ? rateRow(it) : '';
   } else if (s.mode === 'cloze') {
@@ -478,7 +488,7 @@ A.undo = async () => {
   Object.assign(s, u.lists, { reviewed: u.reviewed, learned: u.learned });
   const it = model().byId.get(r?.cardId);
   if (it) { s.current = it.card.id; s.revealed = false; s.answered = null; s.typed = ''; s.pre = null; s.learnStage = 0;
-    s.mode = it.info.isNew ? 'learn' : chooseMode(it); s.mcOptions = (s.mode === 'mc' || s.mode === 'learn') ? mcOptions(it) : null; s.learnFallback = s.mode === 'learn' && !s.mcOptions; }
+    setMode(s, it); s.learnFallback = s.mode === 'learn' && !s.mcOptions; }
   render();
 };
 A.endStudy = () => { UI.session = null; M = null; go('home'); };
@@ -789,6 +799,15 @@ A.deleteCard = () => modal({ title: `Delete “${store.get(UI.cardId).word}”?`
   onOk: async () => { await store.put({ ...store.get(UI.cardId), deleted: true }); go('deck'); toast('Card deleted.'); } });
 
 // ───────── Progress ─────────
+// Practice-question score by topic: share of answers rated above Again.
+function practiceScores(m) {
+  const q = new Map(m.items.filter(x => Array.isArray(x.card.choices)).map(x => [x.card.id, (x.card.tags || [])[0] || 'Other']));
+  if (!q.size) return '';
+  const by = {}; for (const r of m.allReviews) { const t = q.get(r.cardId); if (!t || !r.rating) continue; const b = by[t] ||= { ok: 0, n: 0 }; b.n++; if (r.rating > 1) b.ok++; }
+  const rows = Object.entries(by).sort((a, b) => a[1].ok / a[1].n - b[1].ok / b[1].n);
+  return `<div><label>Practice questions · correct by topic</label>${rows.length ? rows.map(([t, b]) => { const pc = Math.round(b.ok / b.n * 100);
+    return `<div class="small" style="display:flex;justify-content:space-between;margin-top:6px"><span>${esc(t)}</span><span>${pc}% · ${b.n} answer${b.n === 1 ? '' : 's'}</span></div><div class="bar"><i style="width:${pc}%"></i></div>`; }).join('') : '<p class="small muted">Scores appear after your first practice questions.</p>'}</div>`;
+}
 V.progress = () => {
   const m = model(); const p = progress(m.items, m.allReviews); const total = Object.values(p.counts).reduce((a, b) => a + b, 0) || 1;
   const max = Math.max(1, ...p.forecast.map(f => f.n));
@@ -800,6 +819,7 @@ V.progress = () => {
   <div><label>Cards by state</label><div class="bar" style="height:14px">${Object.entries(p.counts).map(([k, n]) => `<i style="width:${n / total * 100}%;background:var(${colors[k]})"></i>`).join('')}</div>
   <div class="legend">${Object.entries(p.counts).map(([k, n]) => `<span><span class="dot" style="background:var(${colors[k]})"></span>${k} ${n}</span>`).join('')}</div></div>
   <div><label>Reviews due, next 7 days</label><div class="chart">${p.forecast.map((f, i) => `<div>${f.n}<i style="height:${f.n / max * 80}px"></i>${i === 0 ? 'Today' : days[new Date(f.t + 3600000 * 6).getDay()]}</div>`).join('')}</div></div>
+  ${practiceScores(m)}
   <p class="small muted">Mastered = next review 21 days or more away. A study day starts at 4:00.</p></div>${tabs()}`;
 };
 
