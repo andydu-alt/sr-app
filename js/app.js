@@ -102,6 +102,8 @@ function render() {
   if (winY) scrollTo(0, winY);
   if (fid) { const el = document.getElementById(fid); if (el) { el.focus({ preventScroll: true }); try { if (sel) el.setSelectionRange(sel[0], sel[1]); } catch {} } }
   const af = $app.querySelector('[data-autofocus]'); if (af && !fid) af.focus();
+  // Background re-renders rebuild Quick Add; restore what was typed and its suggestions.
+  const qa = document.getElementById('qa'); if (qa && UI.qaText) { qa.value = UI.qaText; document.getElementById('qab').disabled = !UI.qaText.trim(); A.qaSuggest(UI.qaText); }
 }
 let toastTimer;
 function toast(t) { UI.toast = t; render(); clearTimeout(toastTimer); toastTimer = setTimeout(() => { UI.toast = null; render(); }, 2600); }
@@ -303,10 +305,10 @@ A.toggleDeck = async id => { const d = store.get(id); if (!d) return; await stor
 function whenText(t) { const ms = t - Date.now(); if (ms <= 0) return 'now'; if (ms < 3600000) return 'in ' + Math.ceil(ms / 60000) + ' min'; if (t < nextDayStart()) return 'in ' + Math.max(1, Math.round(ms / 3600000)) + ' h';
   const d = Math.max(1, Math.round(ms / 86400000)); if (d < 60) return `in ${d} day${d === 1 ? '' : 's'}`; const mo = Math.round(d / 30.4); return `in ${mo} months`; }
 // Live suggestions: existing cards that match what is typed; nothing shows when the word is new.
-A.qaSuggest = v => { const el = document.getElementById('qas'); if (!el) return; const q = canon(v || '');
+A.qaSuggest = v => { UI.qaText = v || ''; const el = document.getElementById('qas'); if (!el) return; const q = canon(v || '');
   if (q.length < 2) { el.innerHTML = ''; return; }
   const rank = c => { const w = canon(c.word); return w === q ? 0 : w.startsWith(q) ? 1 : 2; };
-  const hits = store.all('card').filter(c => store.get(c.deckId) && canon(c.word).includes(q))
+  const hits = store.all('card').filter(c => !c.choices && store.get(c.deckId) && canon(c.word).includes(q))
     .sort((a, b) => rank(a) - rank(b) || a.word.length - b.word.length).slice(0, 6);
   el.innerHTML = hits.length ? `<p class="small muted" style="margin:4px 0">Already in your decks:</p>` + hits.map(c => `<div class="deck"><button class="main" onclick="A.openCard('${c.id}')"><h3><span data-notr>${esc(c.word)}</span></h3><span class="counts"><span class="muted">${esc(store.get(c.deckId).name)}${rank(c) === 0 ? ' · exact match' : ''}</span></span></button><button class="btn sm ghost" onclick="A.studyWord('${c.id}')">Study</button></div>`).join('') : ''; };
 // Study one chosen word now, instead of waiting for it to come up.
@@ -314,7 +316,7 @@ A.studyWord = id => { const it = model().byId.get(id); if (!it) return;
   UI.session = { deckId: null, learning: [], reviews: it.info.isNew ? [] : [id], newCards: it.info.isNew ? [id] : [],
     started: Date.now(), reviewed: 0, learned: 0, undo: [], current: null };
   nextCard(); go('study'); };
-A.quickAdd = () => { const v = document.getElementById('qa').value; if (v.trim()) A.openAdd({ word: v }); };
+A.quickAdd = () => { const v = document.getElementById('qa').value; if (v.trim()) { UI.qaText = ''; A.openAdd({ word: v }); } };
 
 // ───────── Read (browse cards like stories; no test, no effect on the schedule) ─────────
 A.read = (deckId, savedOnly = false) => {
@@ -331,8 +333,9 @@ V.read = () => {
   <div class="scroll"><div class="progressbar"><i style="width:${(r.i + 1) / r.ids.length * 100}%"></i></div>
   <div class="card" id="readcard" data-notr-content><div class="inner" style="text-align:left;align-items:stretch">
     <div class="mode">${esc(d.name || '')}${tags ? ' · ' + tags : ''}</div>
-    <div class="w" style="text-align:left">${esc(c.word)}</div>${c.ipa ? `<div class="muted">${esc(c.ipa)}</div>` : ''}
-    <div style="font-size:18px;white-space:pre-line">${esc(c.explanation || '')}</div>
+    ${c.choices ? `<div style="font-size:18px">${esc(c.word)}</div><div class="small muted">Answer</div><div style="font-weight:600;white-space:pre-line">${esc(c.explanation || '')}</div>${c.why ? `<div class="small muted">${esc(c.why)}</div>` : ''}`
+    : `<div class="w" style="text-align:left">${esc(c.word)}</div>${c.ipa ? `<div class="muted">${esc(c.ipa)}</div>` : ''}
+    <div style="font-size:18px;white-space:pre-line">${esc(c.explanation || '')}</div>`}
     ${c.example ? `<div class="ex">“${esc(c.example)}”</div>` : ''}${c.notes ? `<div class="small muted">${esc(c.notes)}</div>` : ''}
   </div></div>
   <div class="rate"><button onclick="A.readStep(-1)" ${r.i ? '' : 'disabled'}>‹ Back</button><button class="${c.saved ? 'pre' : ''}" onclick="A.readSave()">${c.saved ? '★ Saved' : '☆ Save'}</button><button onclick="A.readStep(1)">Next ›</button></div>
@@ -379,7 +382,7 @@ V.exam = () => {
   return `<div class="top"><button class="btn ghost sm" onclick="A.examQuit()">✕ Quit</button><b id="extime">${fmtClock(e.end - Date.now())}</b><button class="btn ghost sm" onclick="A.examFinish()">Finish</button></div>
   <div class="scroll"><div class="small muted">Question ${e.i + 1} of ${e.qs.length} · ${answered} answered</div><div class="progressbar"><i style="width:${(e.i + 1) / e.qs.length * 100}%"></i></div>
   <div class="card"><div class="inner" style="text-align:left;align-items:stretch"><div style="font-size:18px">${esc(c.word || '')}</div>
-  <div class="opts">${q.opts.map((o, i) => `<button class="opt ${q.pick === i ? 'right' : ''}" onclick="A.examPick(${i})">${'ABCD'[i]}. ${esc(o)}</button>`).join('')}</div></div></div>
+  <div class="opts">${q.opts.map((o, i) => `<button class="opt ${q.pick === i ? 'picked' : ''}" onclick="A.examPick(${i})">${'ABCD'[i]}. ${esc(o)}</button>`).join('')}</div></div></div>
   <div class="rate"><button onclick="A.examGo(-1)" ${e.i ? '' : 'disabled'}>‹ Back</button><button class="${q.flag ? 'pre' : ''}" onclick="A.examFlag()">${q.flag ? '⚑ Flagged' : '⚐ Flag'}</button><button onclick="A.examGo(1)">${e.i + 1 < e.qs.length ? 'Next ›' : 'Review'}</button></div>
   ${e.review ? `<p class="small muted">Tap a number to go back. Faded = not answered, ⚑ = flagged.</p><div class="chips">${e.qs.map((x, i) => `<button class="chip ${i === e.i ? 'on' : ''}" style="${x.pick === null ? 'opacity:.5' : ''}" onclick="A.examJump(${i})">${i + 1}${x.flag ? '⚑' : ''}</button>`).join('')}</div>` : ''}</div>`;
 };
