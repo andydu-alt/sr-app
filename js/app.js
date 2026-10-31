@@ -136,7 +136,8 @@ A.syncInfo = () => {
       + (pending ? ` ${pending} change${pending > 1 ? 's' : ''} waiting to sync.` : ''),
     ok: 'Sync now', alt: 'Close', onOk: () => sync.syncNow() });
 };
-const speakBtn = (text, lang = 'en') => `<button class="speak" aria-label="Play pronunciation" onclick="A.speak(this.dataset.say, this.dataset.lang)" data-say="${esc(text)}" data-lang="${lang}">${ICON.speak}</button>`;
+// Decks with lang 'none' (e.g. PMI concepts) have no pronunciation.
+const speakBtn = (text, lang = 'en') => lang === 'none' ? '' : `<button class="speak" aria-label="Play pronunciation" onclick="A.speak(this.dataset.say, this.dataset.lang)" data-say="${esc(text)}" data-lang="${lang}">${ICON.speak}</button>`;
 const deckLang = deckId => (store.get(deckId) || {}).lang || 'en';
 const greeting = () => { const h = new Date().getHours(); return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'; };
 const userName = () => (auth.current()?.user?.name || '').split(' ')[0];
