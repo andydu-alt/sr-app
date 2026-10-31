@@ -19,6 +19,7 @@ const ICON = {
   decks: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="6" width="14" height="14" rx="2"/><path d="M8 3h11a2 2 0 0 1 2 2v11"/></svg>',
   progress: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
   settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg>',
+  read: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 5h7a3 3 0 0 1 3 3v12a2 2 0 0 0-2-2H2zM22 5h-7a3 3 0 0 0-3 3v12a2 2 0 0 1 2-2h8z"/></svg>',
   speak: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5L6 9H2v6h4l5 4zM15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/></svg>',
 };
 const ls = { get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch { return d; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
@@ -76,7 +77,7 @@ function deckStats(deckId) {
 // ───────── Rendering ─────────
 function go(screen, extra = {}, push = true) {
   UI = { ...UI, ...extra, screen, modal: null };
-  UI.tab = { home: 'home', study: 'home', done: 'home', decks: 'decks', deck: 'decks', card: 'decks', import: 'decks', progress: 'progress', settings: 'settings', help: 'settings' }[screen] || UI.tab;
+  UI.tab = { home: 'home', study: 'home', read: 'home', done: 'home', decks: 'decks', deck: 'decks', card: 'decks', import: 'decks', progress: 'progress', settings: 'settings', help: 'settings' }[screen] || UI.tab;
   if (push) try { history.pushState({ screen }, ''); } catch {}
   render();
   const sc = $app.querySelector('.scroll'); if (sc) sc.scrollTop = 0;
@@ -294,7 +295,7 @@ V.home = () => {
     : `<div class="empty" style="padding:8px 0"><h3 style="margin:0">Nothing due right now</h3><p class="muted">${nextDue ? 'Next review ' + whenText(nextDue) + '.' : 'Add words to start learning.'}</p>${anyNew ? `<button class="btn ghost" onclick="A.study(null,5)">Learn 5 extra new words</button>` : ''}</div>`}
   ${m.decks.map(d => { const s = deckStats(d.id); return `<div class="deck ${d.off ? 'is-off' : ''}"><button class="main" onclick="${s.due + s.newCount ? `A.study('${d.id}')` : `A.openDeck('${d.id}')`}"><h3><span data-notr>${esc(d.name)}</span>${d.lang === 'fr' ? ' <span class="tag">FR</span>' : ''}</h3>
     <span class="counts">${d.off ? `<span class="muted">Off · not included in Study all</span>` : s.total ? `<span><span class="due">${s.due}</span> due</span><span><span class="new">${s.newCount}</span> new</span><span class="muted">${s.mastery}% mastered</span>` : `<span class="muted">No cards yet · tap to add</span>`}</span>
-    <span class="bar"><i style="width:${s.mastery}%"></i></span></button>${switchHtml(d)}<button class="icon" aria-label="Manage ${esc(d.name)}" onclick="A.openDeck('${d.id}')">⋯</button></div>`; }).join('')}
+    <span class="bar"><i style="width:${s.mastery}%"></i></span></button>${s.total ? `<button class="icon" aria-label="Read ${esc(d.name)}" onclick="A.read('${d.id}')">${ICON.read}</button>` : ''}${switchHtml(d)}<button class="icon" aria-label="Manage ${esc(d.name)}" onclick="A.openDeck('${d.id}')">⋯</button></div>`; }).join('')}
   </div>${tabs()}`;
 };
 function switchHtml(d) { return `<button class="switch ${d.off ? '' : 'on'}" role="switch" aria-checked="${!d.off}" aria-label="Include ${esc(d.name)} in Study all" onclick="A.toggleDeck('${d.id}')"><i></i></button>`; }
@@ -314,6 +315,37 @@ A.studyWord = id => { const it = model().byId.get(id); if (!it) return;
     started: Date.now(), reviewed: 0, learned: 0, undo: [], current: null };
   nextCard(); go('study'); };
 A.quickAdd = () => { const v = document.getElementById('qa').value; if (v.trim()) A.openAdd({ word: v }); };
+
+// ───────── Read (browse cards like stories; no test, no effect on the schedule) ─────────
+A.read = (deckId, savedOnly = false) => {
+  const ids = store.all('card').filter(c => c.deckId === deckId && (!savedOnly || c.saved)).sort((a, b) => (a.order || 0) - (b.order || 0)).map(c => c.id);
+  if (!ids.length) { toast(savedOnly ? 'No saved cards in this deck yet.' : 'This deck has no cards.'); return; }
+  const at = savedOnly ? 0 : Math.min(+ls.get('read:' + deckId, 0) || 0, ids.length - 1);
+  go('read', { reader: { deckId, ids, i: at, savedOnly } });
+};
+V.read = () => {
+  const r = UI.reader; const c = r && store.get(r.ids[r.i]); if (!c) return V.home();
+  const d = store.get(r.deckId) || {}; const tags = (c.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join(' ');
+  return `<div class="top"><button class="btn ghost sm" onclick="A.go('home')">✕ Close</button><span class="small muted">${r.i + 1} / ${r.ids.length}${r.savedOnly ? ' · saved' : ''}</span>
+    <button class="btn ghost sm" onclick="A.read('${r.deckId}', ${!r.savedOnly})">${r.savedOnly ? 'All cards' : 'Saved'}</button></div>
+  <div class="scroll"><div class="progressbar"><i style="width:${(r.i + 1) / r.ids.length * 100}%"></i></div>
+  <div class="card" id="readcard" data-notr-content><div class="inner" style="text-align:left;align-items:stretch">
+    <div class="mode">${esc(d.name || '')}${tags ? ' · ' + tags : ''}</div>
+    <div class="w" style="text-align:left">${esc(c.word)}</div>${c.ipa ? `<div class="muted">${esc(c.ipa)}</div>` : ''}
+    <div style="font-size:18px;white-space:pre-line">${esc(c.explanation || '')}</div>
+    ${c.example ? `<div class="ex">“${esc(c.example)}”</div>` : ''}${c.notes ? `<div class="small muted">${esc(c.notes)}</div>` : ''}
+  </div></div>
+  <div class="rate"><button onclick="A.readStep(-1)" ${r.i ? '' : 'disabled'}>‹ Back</button><button class="${c.saved ? 'pre' : ''}" onclick="A.readSave()">${c.saved ? '★ Saved' : '☆ Save'}</button><button onclick="A.readStep(1)">Next ›</button></div>
+  <p class="small muted center">Swipe left or right. Reading does not change your review schedule.</p></div>`;
+};
+A.readStep = n => { const r = UI.reader; const i = r.i + n; if (i < 0) return;
+  if (i >= r.ids.length) { toast('You reached the end.'); return; }
+  r.i = i; if (!r.savedOnly) ls.set('read:' + r.deckId, i); render(); };
+A.readSave = async () => { const c = store.get(UI.reader.ids[UI.reader.i]); if (!c) return; await store.put({ ...c, saved: !c.saved }); render(); };
+let readX = null;
+document.addEventListener('touchstart', e => { readX = UI.screen === 'read' && e.target.closest('#readcard') ? e.touches[0].clientX : null; }, { passive: true });
+document.addEventListener('touchend', e => { if (readX === null) return; const dx = e.changedTouches[0].clientX - readX; readX = null;
+  if (Math.abs(dx) > 50) A.readStep(dx < 0 ? 1 : -1); }, { passive: true });
 
 // ───────── Study ─────────
 A.study = (deckId = null, extraNew = 0) => {
@@ -358,7 +390,9 @@ function mcOptionsRaw(it) {
 }
 function chooseMode(it) {
   const st = model().st; const c = it.card;
-  const ok = { flashcard: true, reverse: !!c.explanation, typing: !!c.explanation, mc: !!c.explanation && !!mcOptionsRaw(it), cloze: containsWord(c.example, c.word) };
+  // Concept decks (lang 'none') have long terms: no typing or fill-the-gap.
+  const concept = deckLang(c.deckId) === 'none';
+  const ok = { flashcard: true, reverse: !!c.explanation, typing: !concept && !!c.explanation, mc: !!c.explanation && !!mcOptionsRaw(it), cloze: !concept && containsWord(c.example, c.word) };
   const enabled = Object.keys(st.modes).filter(k => st.modes[k] && ok[k]);
   return enabled.length ? enabled[Math.floor(Math.random() * enabled.length)] : 'flashcard';
 }
@@ -904,6 +938,7 @@ A.afterLogin = () => {
 
 // Keyboard shortcuts in study: Space = reveal, 1–4 = rating.
 document.addEventListener('keydown', e => {
+  if (UI.screen === 'read' && !['INPUT', 'TEXTAREA'].includes(e.target.tagName)) { if (e.key === 'ArrowRight') A.readStep(1); else if (e.key === 'ArrowLeft') A.readStep(-1); return; }
   if (UI.screen !== 'study' || !UI.session || UI.modal) return;
   if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
   const s = UI.session;

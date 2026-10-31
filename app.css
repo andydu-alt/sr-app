@@ -159,3 +159,4 @@ pre.code{white-space:pre-wrap;font-size:12px;background:var(--accent-soft);paddi
 .deck.is-off .main{opacity:.55}
 .deckrow{cursor:default}.deckrow .rowmain{all:unset;cursor:pointer;flex:1;min-width:0;display:flex;flex-direction:column}
 .deckrow.is-off .rowmain{opacity:.55}
+.progressbar{height:4px;border-radius:2px;background:var(--line);overflow:hidden}.progressbar i{display:block;height:100%;background:var(--accent,#8ab4f8)}.rate button:disabled{opacity:.4}
