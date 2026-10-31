@@ -409,7 +409,11 @@ function mcHtml(c, title) {
 }
 function rateRow(it) {
   const s = UI.session; const iv = previewIntervals(model().f, it.fc);
-  return `${s.pre ? `<p class="small muted center">Suggested rating is outlined. You can change it.</p>` : ''}<div class="rate">${[['again', 'a', 'Again'], ['hard', 'h', 'Hard'], ['good', 'g', 'Good'], ['easy', 'e', 'Easy']].map(([k, cls, n], i) =>
+  // A checked answer caps the rating: wrong → Again only; one typo → Again or Hard.
+  const all = [['again', 'a', 'Again'], ['hard', 'h', 'Hard'], ['good', 'g', 'Good'], ['easy', 'e', 'Easy']];
+  const opts = s.pre === 'again' ? all.slice(0, 1) : s.pre === 'hard' ? all.slice(0, 2) : all;
+  const note = s.pre === 'again' ? 'Not quite. You will see this word again soon.' : s.pre === 'hard' ? 'Almost: one letter off.' : s.pre ? 'Suggested rating is outlined. You can change it.' : '';
+  return `${note ? `<p class="small muted center">${note}</p>` : ''}<div class="rate">${opts.map(([k, cls, n], i) =>
     `<button class="${cls} ${s.pre === k ? 'pre' : ''}" onclick="A.rate('${k}')" aria-label="${n}, next in ${iv[k]} (key ${i + 1})">${n}<small>${iv[k]}</small></button>`).join('')}</div>`;
 }
 A.reveal = () => { UI.session.revealed = true; render(); };
@@ -418,6 +422,7 @@ A.pickMC = i => { const s = UI.session; if (s.answered) return; const c = model(
 A.checkTyped = () => { const s = UI.session; const v = document.getElementById('ty')?.value ?? s.typed; s.typed = v; s.pre = gradeTyped(v, model().byId.get(s.current).card.word); s.answered = true; render(); };
 A.rate = async name => {
   const s = UI.session; const id = s.current; if (!id) return;
+  if (s.pre === 'again' && name !== 'again' || s.pre === 'hard' && !['again', 'hard'].includes(name)) return;
   const before = model().byId.get(id);
   const rating = { again: 1, hard: 2, good: 3, easy: 4 }[name];
   const rev = { id: store.rid(), type: 'review', cardId: id, rating, time: Date.now(), mode: s.mode };
